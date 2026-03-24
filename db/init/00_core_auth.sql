@@ -1,48 +1,51 @@
--- Create a schema for our custom auth helpers if it doesn't exist
+-- =============================================================================
+-- PostgREST Roles
+-- =============================================================================
+-- authenticator: PostgREST logs in as this role, then switches per JWT
+-- web_anon: unauthenticated requests (no table access by default)
+-- authenticated: verified JWT holders (RLS governs row-level access)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
+        CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD 'postgrest_dev_password';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'web_anon') THEN
+        CREATE ROLE web_anon NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+        CREATE ROLE authenticated NOLOGIN;
+    END IF;
+END
+$$;
+
+GRANT web_anon TO authenticator;
+GRANT authenticated TO authenticator;
+
+-- Grant schema access
+GRANT USAGE ON SCHEMA public TO web_anon, authenticated;
+
+-- Auto-grant table/sequence privileges to authenticated for all future tables
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    GRANT USAGE ON SEQUENCES TO authenticated;
+
+-- =============================================================================
+-- Auth Schema & Helpers
+-- =============================================================================
+-- GoTrue creates auth.users when it first connects (AFTER postgres init).
+-- We create the schema and helper functions here. The profiles table and
+-- trigger that depend on auth.users are created via `make db-setup`.
+-- =============================================================================
 CREATE SCHEMA IF NOT EXISTS auth;
 
--- GoTrue automatically creates the auth.users table.
--- We create a public.profiles table that mirrors it for our application logic.
-CREATE TABLE public.profiles (
-    id UUID REFERENCES auth.users (id) ON DELETE CASCADE PRIMARY KEY,
-    email TEXT UNIQUE NOT NULL,
-    role TEXT DEFAULT 'user',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone ('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone ('utc'::text, now()) NOT NULL
-);
-
--- Enable Row Level Security on the profiles table
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-
--- Helper function: Extract the User ID from the JWT injected by pREST/Fiber
+-- Helper function: Extract the User ID from the JWT
+-- Both Fiber (GUC injection) and PostgREST set request.jwt.claim.sub
 CREATE OR REPLACE FUNCTION auth.uid() RETURNS UUID AS $$
-  SELECT current_setting('request.jwt.claim.sub', true)::UUID;
+  SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID;
 $$ LANGUAGE sql STABLE;
 
--- Helper function: Extract the Role from the JWT injected by pREST/Fiber
+-- Helper function: Extract the Role from the JWT
 CREATE OR REPLACE FUNCTION auth.role() RETURNS TEXT AS $$
-  SELECT current_setting('request.jwt.claim.role', true)::TEXT;
+  SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.role', true), ''), 'anon');
 $$ LANGUAGE sql STABLE;
-
--- Trigger Function: Automatically create a profile when a new GoTrue user signs up
-CREATE OR REPLACE FUNCTION public.handle_new_user() 
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.profiles (id, email, role)
-  VALUES (new.id, new.email, COALESCE(new.raw_app_meta_data->>'role', 'user'));
-  RETURN new;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Bind the trigger to GoTrue's auth.users table
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
-
--- Core RLS Policy: Users can only read and update their own profile
-CREATE POLICY "Users can view own profile" ON public.profiles FOR
-SELECT USING (auth.uid () = id);
-
-CREATE POLICY "Users can update own profile" ON public.profiles
-FOR UPDATE
-    USING (auth.uid () = id);

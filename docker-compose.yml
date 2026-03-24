@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     build:
@@ -15,6 +13,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   dragonfly:
     image: docker.dragonflydb.io/dragonflydb/dragonfly
@@ -44,7 +47,8 @@ services:
     container_name: skeleton_gotrue
     restart: unless-stopped
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     ports:
       - "${GOTRUE_PORT:-9999}:8081"
     environment:
@@ -56,23 +60,50 @@ services:
       API_EXTERNAL_URL: http://localhost:${GOTRUE_PORT}
       GOTRUE_DISABLE_SIGNUP: "false"
       GOTRUE_MAILER_AUTOCONFIRM: "true"
+      # Set JWT role claim to 'authenticated' so PostgREST can switch roles
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
 
-  prest:
-    image: prest/prest
-    container_name: skeleton_prest
+  postgrest:
+    image: postgrest/postgrest:v12.2.3
+    container_name: skeleton_postgrest
     restart: unless-stopped
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     ports:
-      - "${API_PORT_PREST:-3000}:3000"
+      - "${API_PORT_REST:-3000}:3000"
     environment:
-      PREST_PG_HOST: postgres
-      PREST_PG_USER: ${POSTGRES_USER}
-      PREST_PG_PASS: ${POSTGRES_PASSWORD}
-      PREST_PG_DATABASE: ${POSTGRES_DB}
-      PREST_PG_PORT: 5432
-      PREST_JWT_KEY: ${GOTRUE_JWT_SECRET}
-      PREST_CORS_ALLOWORIGIN: ${CORS_ALLOWED_ORIGINS}
+      PGRST_DB_URI: postgres://authenticator:postgrest_dev_password@postgres:5432/${POSTGRES_DB}
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: web_anon
+      PGRST_JWT_SECRET: ${GOTRUE_JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+
+  # --- Fiber API (Custom Go Logic) ---
+  # Uncomment for production / staging. For local dev, use `make dev` instead
+  # which runs the Go binary on your host for fast iteration and debugger access.
+  #
+  # fiber:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.api
+  #   container_name: skeleton_fiber
+  #   restart: unless-stopped
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   ports:
+  #     - "${API_PORT_FIBER:-8080}:8080"
+  #   environment:
+  #     POSTGRES_HOST: postgres
+  #     POSTGRES_PORT: 5432
+  #     POSTGRES_USER: ${POSTGRES_USER}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  #     POSTGRES_DB: ${POSTGRES_DB}
+  #     GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET}
+  #     DRAGONFLY_HOST: dragonfly
+  #     DRAGONFLY_PORT: 6379
+  #     API_PORT_FIBER: 8080
 
 volumes:
   pg_data:

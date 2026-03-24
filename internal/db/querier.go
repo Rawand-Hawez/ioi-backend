@@ -11,9 +11,13 @@ import (
 )
 
 type Querier interface {
-	CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, error)
-	GetTodosForUser(ctx context.Context, userID pgtype.UUID) ([]Todo, error)
-	ToggleTodo(ctx context.Context, arg ToggleTodoParams) error
+	CreateTodoRLS(ctx context.Context, task string) (Todo, error)
+	DeleteTodoRLS(ctx context.Context, id pgtype.UUID) error
+	GetTodoByIDRLS(ctx context.Context, id pgtype.UUID) (Todo, error)
+	// RLS-based queries (rely on auth.uid() via GUC variables)
+	// These must be used within a transaction with GUC injection
+	GetTodosRLS(ctx context.Context) ([]Todo, error)
+	ToggleTodoRLS(ctx context.Context, id pgtype.UUID) error
 }
 
 var _ Querier = (*Queries)(nil)

@@ -11,19 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createTodo = `-- name: CreateTodo :one
-INSERT INTO public.todos (user_id, task)
-VALUES ($1, $2)
+const createTodoRLS = `-- name: CreateTodoRLS :one
+INSERT INTO public.todos (task)
+VALUES ($1)
 RETURNING id, user_id, task, is_complete, created_at
 `
 
-type CreateTodoParams struct {
-	UserID pgtype.UUID `json:"user_id"`
-	Task   string      `json:"task"`
-}
-
-func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, error) {
-	row := q.db.QueryRow(ctx, createTodo, arg.UserID, arg.Task)
+func (q *Queries) CreateTodoRLS(ctx context.Context, task string) (Todo, error) {
+	row := q.db.QueryRow(ctx, createTodoRLS, task)
 	var i Todo
 	err := row.Scan(
 		&i.ID,
@@ -35,14 +30,44 @@ func (q *Queries) CreateTodo(ctx context.Context, arg CreateTodoParams) (Todo, e
 	return i, err
 }
 
-const getTodosForUser = `-- name: GetTodosForUser :many
+const deleteTodoRLS = `-- name: DeleteTodoRLS :exec
+DELETE FROM public.todos
+WHERE id = $1
+`
+
+func (q *Queries) DeleteTodoRLS(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteTodoRLS, id)
+	return err
+}
+
+const getTodoByIDRLS = `-- name: GetTodoByIDRLS :one
 SELECT id, user_id, task, is_complete, created_at FROM public.todos
-WHERE user_id = $1
+WHERE id = $1
+`
+
+func (q *Queries) GetTodoByIDRLS(ctx context.Context, id pgtype.UUID) (Todo, error) {
+	row := q.db.QueryRow(ctx, getTodoByIDRLS, id)
+	var i Todo
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Task,
+		&i.IsComplete,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getTodosRLS = `-- name: GetTodosRLS :many
+
+SELECT id, user_id, task, is_complete, created_at FROM public.todos
 ORDER BY created_at DESC
 `
 
-func (q *Queries) GetTodosForUser(ctx context.Context, userID pgtype.UUID) ([]Todo, error) {
-	rows, err := q.db.Query(ctx, getTodosForUser, userID)
+// RLS-based queries (rely on auth.uid() via GUC variables)
+// These must be used within a transaction with GUC injection
+func (q *Queries) GetTodosRLS(ctx context.Context) ([]Todo, error) {
+	rows, err := q.db.Query(ctx, getTodosRLS)
 	if err != nil {
 		return nil, err
 	}
@@ -67,18 +92,13 @@ func (q *Queries) GetTodosForUser(ctx context.Context, userID pgtype.UUID) ([]To
 	return items, nil
 }
 
-const toggleTodo = `-- name: ToggleTodo :exec
+const toggleTodoRLS = `-- name: ToggleTodoRLS :exec
 UPDATE public.todos
 SET is_complete = NOT is_complete
-WHERE id = $1 AND user_id = $2
+WHERE id = $1
 `
 
-type ToggleTodoParams struct {
-	ID     pgtype.UUID `json:"id"`
-	UserID pgtype.UUID `json:"user_id"`
-}
-
-func (q *Queries) ToggleTodo(ctx context.Context, arg ToggleTodoParams) error {
-	_, err := q.db.Exec(ctx, toggleTodo, arg.ID, arg.UserID)
+func (q *Queries) ToggleTodoRLS(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, toggleTodoRLS, id)
 	return err
 }

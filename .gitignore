@@ -38,4 +38,6 @@ Thumbs.db
 # AI & Documentation (Local Only)
 AGENT.md
 docs/
-
+.kilo
+.claude
+IOI_Backend.postman_collection.json

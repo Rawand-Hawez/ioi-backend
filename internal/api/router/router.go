@@ -12,13 +12,17 @@ func SetupRoutes(app *fiber.App) {
 	// API Group
 	api := app.Group("/api/v1")
 
+	// Public demo endpoint
 	api.Get("/demo", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"message": "Custom Fiber JSON response securely proxied past pREST",
+			"message": "Custom Fiber JSON response from IOI Backend API",
 		})
 	})
 
-	// Setup custom resource
-	api.Use("/todos", middleware.RequireAuth())
-	api.Get("/todos", handlers.GetTodos)
+	// Authenticated routes with RLS (GUC injection for Row-Level Security)
+	todos := api.Group("/todos", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	todos.Get("/", handlers.GetTodosRLS)
+	todos.Post("/", handlers.CreateTodoRLS)
+	todos.Patch("/:id/toggle", handlers.ToggleTodoRLS)
+	todos.Delete("/:id", handlers.DeleteTodoRLS)
 }

@@ -8,7 +8,7 @@ This project utilizes a strictly curated stack to ensure maximum throughput and 
 
 ### Core API Layer
 - **Go & Fiber v2**: Leverages the `fasthttp` engine for zero-allocation memory management and high-concurrency handling. Unlike Node.js or Python, the compiled Go binary eliminates runtime overhead and provides true multi-threaded execution.
-- **pREST**: Provides instantaneous, highly optimized RESTful endpoints for standard CRUD operations directly from the PostgreSQL schema, significantly reducing boilerplate code.
+- **PostgREST**: Provides instantaneous, highly optimized RESTful endpoints for standard CRUD operations directly from the PostgreSQL schema, significantly reducing boilerplate code.
 
 ### Data Persistence & Integrity
 - **PostgreSQL 18**: The primary source of truth. Security is enforced natively through Row-Level Security (RLS) policies, ensuring a zero-trust architecture where authorization is handled at the database level.
@@ -33,11 +33,29 @@ By moving from a managed platform (e.g., Supabase) to this self-hosted architect
 
 This repository provides a standardized implementation workflow for building high-performance features.
 
-### Quick Start
-1. Configure environment: `cp .env.example .env`
-2. Initialize infrastructure: `docker compose up -d`
-3. Generate DB bindings: `make db-gen`
-4. Run development server: `make dev`
+### Quick Start (Development)
+```bash
+cp .env.example .env          # 1. Configure environment
+docker compose up -d           # 2. Start infrastructure (Postgres, PostgREST, GoTrue, Dragonfly, MinIO)
+make db-setup                  # 3. Create app tables, triggers, seed dev user (run once after first boot)
+make db-gen                    # 4. Generate sqlc Go bindings
+make dev                       # 5. Start Fiber API locally on :8080
+```
+
+During development, the Fiber API runs on your host machine (`make dev`) while all other
+services run in Docker. This gives you instant recompilation, debugger access, and fast
+iteration without rebuilding a container on every change.
+
+### Production / Staging
+Uncomment the `fiber` service in `docker-compose.yml` to containerize the Fiber API alongside
+the rest of the stack. The multi-stage `Dockerfile.api` produces a minimal Alpine image with
+a statically-linked Go binary.
+
+```bash
+# Enable the fiber service in docker-compose.yml, then:
+docker compose up -d --build
+make db-setup
+```
 
 ### Database Branching
 Safely test migrations by cloning the primary database:

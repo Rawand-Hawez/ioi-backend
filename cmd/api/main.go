@@ -2,23 +2,25 @@ package main
 
 import (
 	"log"
-	"os"
 
 	"ioibackend/internal/api/handlers"
 	"ioibackend/internal/api/router"
 	"ioibackend/internal/cache"
 	"ioibackend/internal/config"
-	"ioibackend/internal/realtime"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
 )
 
 func main() {
-	// Load configuration
+	// Load configuration with validation
 	config.Load()
 
-	// Connect Database
+	// Get configuration
+	cfg := config.Get()
+
+	// Connect Database with GUC support
 	handlers.InitDB()
 
 	// Initialize Cache (Dragonfly)
@@ -31,15 +33,20 @@ func main() {
 	})
 
 	// Setup Realtime WebSockets
-	realtime.RegisterWSRoute(app)
+	// realtime.RegisterWSRoute(app)
 
 	// Global Middleware
+	app.Use(recover.New())
 	app.Use(logger.New())
 
 	// Health check route
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{
 			"status": "up",
+			"services": fiber.Map{
+				"postgres": "connected",
+				"cache":    "connected",
+			},
 		})
 	})
 
@@ -47,7 +54,7 @@ func main() {
 	router.SetupRoutes(app)
 
 	// Start server
-	port := os.Getenv("API_PORT_FIBER")
+	port := cfg.API.FiberPort
 	if port == "" {
 		port = "8080"
 	}

@@ -1,4 +1,4 @@
-.PHONY: dev build db-gen
+.PHONY: dev build db-gen db-setup db-seed
 
 dev:
 	go run cmd/api/main.go
@@ -8,6 +8,18 @@ build:
 
 db-gen:
 	sqlc generate
+
+# Run after first `docker compose up` — creates profiles, app tables, triggers, and seeds dev user.
+# GoTrue must be running (it creates auth.users on first boot).
+db-setup:
+	@echo "Running post-GoTrue setup (profiles, app tables, triggers)..."
+	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/post_gotrue.sql
+	@echo "Seeding development user..."
+	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/seed.sql
+	@echo "Setup complete."
+
+db-seed:
+	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/seed.sql
 
 # --- LOCAL DATABASE BRANCHING ---
 # Extract active DB and establish the protected master database
@@ -27,7 +39,7 @@ db-branch-switch:
 	@echo "Switching .env database target to '$(BRANCH)'..."
 	@sed -i.bak "s/^POSTGRES_DB=.*/POSTGRES_DB=$(BRANCH)/" .env && rm -f .env.bak
 	@echo "Restarting specific containers to map new .env configurations..."
-	@docker compose up -d --force-recreate prest gotrue
+	@docker compose up -d --force-recreate postgrest gotrue
 	@echo "✅ Switched architecture to branch: $(BRANCH)"
 
 db-branch-drop:
