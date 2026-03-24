@@ -28,3 +28,25 @@ CREATE POLICY "Users can update their own todos"
 CREATE POLICY "Users can delete their own todos" 
     ON public.todos FOR DELETE 
     USING (auth.uid() = user_id);
+
+-- REALTIME NOTIFICATIONS
+-- This function sends a JSON payload to the 'realtime_events' channel
+CREATE OR REPLACE FUNCTION notify_realtime()
+RETURNS TRIGGER AS $$
+BEGIN
+  PERFORM pg_notify(
+    'realtime_events',
+    json_build_object(
+      'table', TG_TABLE_NAME,
+      'action', TG_OP,
+      'data', row_to_json(NEW)
+    )::text
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger for the 'todos' table
+CREATE TRIGGER todos_realtime
+AFTER INSERT OR UPDATE OR DELETE ON todos
+FOR EACH ROW EXECUTE FUNCTION notify_realtime();

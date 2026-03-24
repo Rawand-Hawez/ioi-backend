@@ -6,7 +6,9 @@ import (
 
 	"ioibackend/internal/api/handlers"
 	"ioibackend/internal/api/router"
+	"ioibackend/internal/cache"
 	"ioibackend/internal/config"
+	"ioibackend/internal/realtime"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -19,11 +21,17 @@ func main() {
 	// Connect Database
 	handlers.InitDB()
 
+	// Initialize Cache (Dragonfly)
+	cache.InitCache()
+
 	// Initialize Fiber application
 	app := fiber.New(fiber.Config{
 		AppName:           "IOI Backend API",
 		EnablePrintRoutes: true,
 	})
+
+	// Setup Realtime WebSockets
+	realtime.RegisterWSRoute(app)
 
 	// Global Middleware
 	app.Use(logger.New())
