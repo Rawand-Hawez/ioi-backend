@@ -46,10 +46,10 @@ services:
     depends_on:
       - postgres
     ports:
-      - "${GOTRUE_PORT:-9999}:9999"
+      - "${GOTRUE_PORT:-9999}:8081"
     environment:
       GOTRUE_DB_DRIVER: ${GOTRUE_DB_DRIVER}
-      GOTRUE_DB_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      GOTRUE_DB_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable&search_path=auth,public
       GOTRUE_SITE_URL: ${GOTRUE_SITE_URL}
       GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET}
       # Required bare minimum GoTrue settings

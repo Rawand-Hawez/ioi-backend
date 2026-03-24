@@ -37,3 +37,8 @@ db-branch-drop:
 	@echo "Dropping database branch '$(BRANCH)'..."
 	@docker exec -i skeleton_postgres psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS $(BRANCH);"
 	@echo "✅ Branch '$(BRANCH)' dropped permanently."
+
+test-e2e:
+	@echo "Running End-to-End Architectural Tests..."
+	@go test -v ./tests/e2e_test.go
+

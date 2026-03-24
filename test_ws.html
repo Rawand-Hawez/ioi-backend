@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IOI Realtime WebSocket Test</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0f172a; color: #f8fafc; padding: 2rem; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { color: #38bdf8; }
+        .status { padding: 0.5rem 1rem; border-radius: 4px; display: inline-block; font-weight: bold; margin-bottom: 1rem; }
+        .connected { background: #059669; color: white; }
+        .disconnected { background: #e11d48; color: white; }
+        .log-box { background: #1e293b; padding: 1rem; border-radius: 8px; border: 1px solid #334155; min-height: 400px; max-height: 600px; overflow-y: auto; font-family: monospace; white-space: pre-wrap; }
+        .event { border-left: 4px solid #38bdf8; padding-left: 1rem; margin-bottom: 1rem; }
+        .time { color: #94a3b8; font-size: 0.875rem; }
+        .payload { color: #a7f3d0; margin-top: 0.5rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚡ IOI Realtime Monitor</h1>
+        <div id="status" class="status disconnected">Disconnected</div>
+        <div class="log-box" id="logs">Waiting for PostgreSQL events...</div>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById('status');
+        const logsEl = document.getElementById('logs');
+        
+        // Connect to our Fiber WebSocket layer
+        const ws = new WebSocket('ws://localhost:8080/ws');
+
+        ws.onopen = () => {
+            statusEl.textContent = 'CONNECTED to Fiber Hub';
+            statusEl.className = 'status connected';
+            logsEl.innerHTML = '';
+            addLog('System', 'Awaiting LISTEN/NOTIFY broadcasts from PostgreSQL...');
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                // The Fiber hub broadcasts strings, which contain the JSON from Postgres
+                const data = JSON.parse(event.data);
+                addLog(`Table: ${data.table} | Action: ${data.action}`, JSON.stringify(data.data, null, 2));
+            } catch (e) {
+                addLog('Raw Message', event.data);
+            }
+        };
+
+        ws.onclose = () => {
+            statusEl.textContent = 'DISCONNECTED';
+            statusEl.className = 'status disconnected';
+            addLog('System', 'Connection closed.');
+        };
+
+        function addLog(title, payload) {
+            const time = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = 'event';
+            logEntry.innerHTML = `
+                <div class="time">${time}</div>
+                <strong>${title}</strong>
+                <div class="payload">${payload}</div>
+            `;
+            logsEl.insertBefore(logEntry, logsEl.firstChild);
+        }
+    </script>
+</body>
+</html>
