@@ -1,0 +1,39 @@
+.PHONY: dev build db-gen
+
+dev:
+	go run cmd/api/main.go
+
+build:
+	go build -o bin/api cmd/api/main.go
+
+db-gen:
+	sqlc generate
+
+# --- LOCAL DATABASE BRANCHING ---
+# Extract active DB and establish the protected master database
+MAIN_DB := app_database
+ACTIVE_DB ?= $(shell grep ^POSTGRES_DB= .env | cut -d '=' -f2)
+
+db-branch-create:
+	@if [ -z "$(BRANCH)" ]; then echo "Error: BRANCH name required (e.g., make db-branch-create BRANCH=feature_x)"; exit 1; fi
+	@echo "Terminating active connections on '$(ACTIVE_DB)'..."
+	@docker exec -i skeleton_postgres psql -U postgres -d postgres -c "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '$(ACTIVE_DB)' AND pid <> pg_backend_pid();" > /dev/null
+	@echo "Cloning database from '$(ACTIVE_DB)' to '$(BRANCH)'..."
+	@docker exec -i skeleton_postgres psql -U postgres -d postgres -c "CREATE DATABASE $(BRANCH) WITH TEMPLATE $(ACTIVE_DB);"
+	@echo "✅ Branch '$(BRANCH)' created successfully."
+
+db-branch-switch:
+	@if [ -z "$(BRANCH)" ]; then echo "Error: BRANCH name required. Use make db-branch-switch BRANCH=$(MAIN_DB) to revert."; exit 1; fi
+	@echo "Switching .env database target to '$(BRANCH)'..."
+	@sed -i.bak "s/^POSTGRES_DB=.*/POSTGRES_DB=$(BRANCH)/" .env && rm -f .env.bak
+	@echo "Restarting specific containers to map new .env configurations..."
+	@docker compose up -d --force-recreate prest gotrue
+	@echo "✅ Switched architecture to branch: $(BRANCH)"
+
+db-branch-drop:
+	@if [ -z "$(BRANCH)" ]; then echo "Error: BRANCH name required"; exit 1; fi
+	@if [ "$(BRANCH)" = "$(MAIN_DB)" ]; then echo "🚨 CRITICAL ERROR: Refusing to drop the protected master database ($(MAIN_DB))."; exit 1; fi
+	@if [ "$(BRANCH)" = "$(ACTIVE_DB)" ]; then echo "🚨 ERROR: Cannot drop the currently active branch. Switch off it first."; exit 1; fi
+	@echo "Dropping database branch '$(BRANCH)'..."
+	@docker exec -i skeleton_postgres psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS $(BRANCH);"
+	@echo "✅ Branch '$(BRANCH)' dropped permanently."

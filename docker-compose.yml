@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    container_name: skeleton_postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly
+    container_name: skeleton_dragonfly
+    restart: unless-stopped
+    ports:
+      - "${DRAGONFLY_PORT:-6379}:6379"
+    volumes:
+      - dragonfly_data:/data
+
+  minio:
+    image: minio/minio
+    container_name: skeleton_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+
+  gotrue:
+    image: supabase/gotrue:v2.132.3
+    container_name: skeleton_gotrue
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "${GOTRUE_PORT:-9999}:9999"
+    environment:
+      GOTRUE_DB_DRIVER: ${GOTRUE_DB_DRIVER}
+      GOTRUE_DB_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      GOTRUE_SITE_URL: ${GOTRUE_SITE_URL}
+      GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET}
+      # Required bare minimum GoTrue settings
+      API_EXTERNAL_URL: http://localhost:${GOTRUE_PORT}
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+
+  prest:
+    image: prest/prest
+    container_name: skeleton_prest
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    ports:
+      - "${API_PORT_PREST:-3000}:3000"
+    environment:
+      PREST_PG_HOST: postgres
+      PREST_PG_USER: ${POSTGRES_USER}
+      PREST_PG_PASS: ${POSTGRES_PASSWORD}
+      PREST_PG_DATABASE: ${POSTGRES_DB}
+      PREST_PG_PORT: 5432
+      PREST_JWT_KEY: ${GOTRUE_JWT_SECRET}
+      PREST_CORS_ALLOWORIGIN: ${CORS_ALLOWED_ORIGINS}
+
+volumes:
+  pg_data:
+  dragonfly_data:
+  minio_data:
