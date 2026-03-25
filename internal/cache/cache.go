@@ -23,7 +23,7 @@ func InitCache() {
 
 	Client = redis.NewClient(&redis.Options{
 		Addr:     addr,
-		Password: "",
+		Password: cfg.Dragonfly.Password,
 		DB:       0,
 	})
 

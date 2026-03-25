@@ -1,8 +1,9 @@
 package middleware
 
 import (
-	"os"
 	"strings"
+
+	"ioibackend/internal/config"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
@@ -11,7 +12,7 @@ import (
 // RequireAuth intercepts the request, verifies the JWT using the Gotrue secret,
 // and injects the extracted user claims into the Fiber Context.
 func RequireAuth() fiber.Handler {
-	secret := []byte(os.Getenv("GOTRUE_JWT_SECRET"))
+	secret := []byte(config.Get().GoTrue.JWTSecret)
 
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")

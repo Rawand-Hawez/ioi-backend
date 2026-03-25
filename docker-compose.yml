@@ -6,7 +6,7 @@ services:
     container_name: skeleton_postgres
     restart: unless-stopped
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -24,7 +24,7 @@ services:
     container_name: skeleton_dragonfly
     restart: unless-stopped
     ports:
-      - "${DRAGONFLY_PORT:-6379}:6379"
+      - "127.0.0.1:${DRAGONFLY_PORT:-6379}:6379"
     volumes:
       - dragonfly_data:/data
 
@@ -34,8 +34,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     ports:
-      - "${MINIO_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -50,7 +50,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${GOTRUE_PORT:-9999}:8081"
+      - "127.0.0.1:${GOTRUE_PORT:-9999}:8081"
     environment:
       GOTRUE_DB_DRIVER: ${GOTRUE_DB_DRIVER}
       GOTRUE_DB_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable&search_path=auth,public
@@ -59,7 +59,7 @@ services:
       # Required bare minimum GoTrue settings
       API_EXTERNAL_URL: http://localhost:${GOTRUE_PORT}
       GOTRUE_DISABLE_SIGNUP: "false"
-      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: ${GOTRUE_MAILER_AUTOCONFIRM:-true}
       # Set JWT role claim to 'authenticated' so PostgREST can switch roles
       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
 
@@ -71,7 +71,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "${API_PORT_REST:-3000}:3000"
+      - "127.0.0.1:${API_PORT_REST:-3000}:3000"
     environment:
       PGRST_DB_URI: postgres://authenticator:${POSTGREST_PASSWORD}@postgres:5432/${POSTGRES_DB}
       PGRST_DB_SCHEMAS: public
@@ -93,7 +93,7 @@ services:
   #     postgres:
   #       condition: service_healthy
   #   ports:
-  #     - "${API_PORT_FIBER:-8080}:8080"
+  #     - "127.0.0.1:${API_PORT_FIBER:-8080}:8080"
   #   environment:
   #     POSTGRES_HOST: postgres
   #     POSTGRES_PORT: 5432

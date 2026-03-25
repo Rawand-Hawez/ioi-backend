@@ -36,8 +36,9 @@ type GoTrueConfig struct {
 
 // DragonflyConfig holds Dragonfly (Redis) configuration
 type DragonflyConfig struct {
-	Host string
-	Port string
+	Host     string
+	Port     string
+	Password string
 }
 
 // MinIOConfig holds MinIO storage configuration
@@ -79,8 +80,9 @@ func Load() {
 			SiteURL:   getEnv("GOTRUE_SITE_URL", "http://localhost:3000"),
 		},
 		Dragonfly: DragonflyConfig{
-			Host: getEnv("DRAGONFLY_HOST", "localhost"),
-			Port: getEnv("DRAGONFLY_PORT", "6379"),
+			Host:     getEnv("DRAGONFLY_HOST", "localhost"),
+			Port:     getEnv("DRAGONFLY_PORT", "6379"),
+			Password: getEnv("DRAGONFLY_PASSWORD", ""),
 		},
 		MinIO: MinIOConfig{
 			Host:      getEnv("MINIO_HOST", "localhost"),

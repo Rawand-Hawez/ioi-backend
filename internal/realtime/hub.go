@@ -10,57 +10,75 @@ import (
 
 // Hub maintains the set of active clients and broadcasts messages to them.
 type Hub struct {
-	// Registered clients.
-	clients map[*websocket.Conn]bool
-	// Inbound messages from the clients or the Postgres listener.
+	clients   map[*websocket.Conn]string // conn → authenticated user_id
 	broadcast chan []byte
-	// Lock for client map operations
-	mu sync.Mutex
+	mu        sync.Mutex
 }
 
 // NewHub initializes a new WebSocket Hub.
 func NewHub() *Hub {
 	return &Hub{
-		clients:   make(map[*websocket.Conn]bool),
+		clients:   make(map[*websocket.Conn]string),
 		broadcast: make(chan []byte),
 	}
 }
 
-// Register adds a new client to the hub.
-func (h *Hub) Register(conn *websocket.Conn) {
+// Register adds a new authenticated client to the hub.
+func (h *Hub) Register(conn *websocket.Conn, userID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.clients[conn] = true
-	log.Printf("New WebSocket client registered: %p", conn)
+	h.clients[conn] = userID
+	log.Printf("WebSocket client connected: user %s", userID)
 }
 
 // Unregister removes a client from the hub.
 func (h *Hub) Unregister(conn *websocket.Conn) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if _, ok := h.clients[conn]; ok {
+	if userID, ok := h.clients[conn]; ok {
 		delete(h.clients, conn)
 		conn.Close()
-		log.Printf("WebSocket client disconnected: %p", conn)
+		log.Printf("WebSocket client disconnected: user %s", userID)
 	}
 }
 
-// Run starts the broadcast loop.
+// Run starts the broadcast loop, routing each message to its owning user only.
+// The payload is expected to be JSON with a "data.user_id" field (set by the
+// notify_realtime() trigger). If no user_id is found, the message is broadcast
+// to all connected clients.
 func (h *Hub) Run() {
 	for message := range h.broadcast {
+		// Extract the target user_id from the pg_notify payload
+		var envelope struct {
+			Data struct {
+				UserID string `json:"user_id"`
+			} `json:"data"`
+		}
+		targetUserID := ""
+		if err := json.Unmarshal(message, &envelope); err == nil {
+			targetUserID = envelope.Data.UserID
+		}
+
 		// Snapshot clients under lock
 		h.mu.Lock()
-		clients := make([]*websocket.Conn, 0, len(h.clients))
-		for client := range h.clients {
-			clients = append(clients, client)
+		type entry struct {
+			conn   *websocket.Conn
+			userID string
+		}
+		clients := make([]entry, 0, len(h.clients))
+		for conn, uid := range h.clients {
+			clients = append(clients, entry{conn, uid})
 		}
 		h.mu.Unlock()
 
-		// Write outside the lock so one slow client cannot stall all broadcasts
-		for _, client := range clients {
-			if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
-				log.Printf("Error sending message to client %p: %v", client, err)
-				h.Unregister(client)
+		// Write outside the lock; skip clients that don't own this event
+		for _, e := range clients {
+			if targetUserID != "" && e.userID != targetUserID {
+				continue
+			}
+			if err := e.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				log.Printf("Error sending message to user %s: %v", e.userID, err)
+				h.Unregister(e.conn)
 			}
 		}
 	}

@@ -18,7 +18,8 @@ func RegisterWSRoute(app *fiber.App) {
 	app.Use("/ws", RequireWSAuth())
 
 	app.Get("/ws", websocket.New(func(c *websocket.Conn) {
-		GlobalHub.Register(c)
+		userID, _ := c.Locals("ws_user_id").(string)
+		GlobalHub.Register(c, userID)
 		defer GlobalHub.Unregister(c)
 
 		for {
