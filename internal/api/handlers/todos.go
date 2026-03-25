@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"context"
 	"log"
+	"time"
 
 	"ioibackend/internal/api/middleware"
 	"ioibackend/internal/config"
@@ -13,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const dbTimeout = 5 * time.Second
 
 // InitDB sets up the pgx connection pool
 func InitDB() {
@@ -41,12 +45,15 @@ func GetTodosRLS(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "Database pool not initialized"})
 	}
 
+	ctx, cancel := context.WithTimeout(c.Context(), dbTimeout)
+	defer cancel()
+
 	var todos []db.Todo
 
-	err := p.WithTx(c.Context(), claims, func(tx pgx.Tx) error {
+	err := p.WithTx(ctx, claims, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		var err error
-		todos, err = q.GetTodosRLS(c.Context())
+		todos, err = q.GetTodosRLS(ctx)
 		return err
 	})
 
@@ -81,17 +88,24 @@ func CreateTodoRLS(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "Task is required"})
 	}
 
+	if len(req.Task) > 500 {
+		return c.Status(400).JSON(fiber.Map{"error": "Task must be 500 characters or fewer"})
+	}
+
 	p := pool.Get()
 	if p == nil {
 		return c.Status(500).JSON(fiber.Map{"error": "Database pool not initialized"})
 	}
 
+	ctx, cancel := context.WithTimeout(c.Context(), dbTimeout)
+	defer cancel()
+
 	var todo db.Todo
 
-	err := p.WithTx(c.Context(), claims, func(tx pgx.Tx) error {
+	err := p.WithTx(ctx, claims, func(tx pgx.Tx) error {
 		q := db.New(tx)
 		var err error
-		todo, err = q.CreateTodoRLS(c.Context(), req.Task)
+		todo, err = q.CreateTodoRLS(ctx, req.Task)
 		return err
 	})
 
@@ -126,9 +140,12 @@ func ToggleTodoRLS(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "Database pool not initialized"})
 	}
 
-	err = p.WithTx(c.Context(), claims, func(tx pgx.Tx) error {
+	ctx, cancel := context.WithTimeout(c.Context(), dbTimeout)
+	defer cancel()
+
+	err = p.WithTx(ctx, claims, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		return q.ToggleTodoRLS(c.Context(), pgUUID)
+		return q.ToggleTodoRLS(ctx, pgUUID)
 	})
 
 	if err != nil {
@@ -162,9 +179,12 @@ func DeleteTodoRLS(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "Database pool not initialized"})
 	}
 
-	err = p.WithTx(c.Context(), claims, func(tx pgx.Tx) error {
+	ctx, cancel := context.WithTimeout(c.Context(), dbTimeout)
+	defer cancel()
+
+	err = p.WithTx(ctx, claims, func(tx pgx.Tx) error {
 		q := db.New(tx)
-		return q.DeleteTodoRLS(c.Context(), pgUUID)
+		return q.DeleteTodoRLS(ctx, pgUUID)
 	})
 
 	if err != nil {
@@ -175,5 +195,6 @@ func DeleteTodoRLS(c *fiber.Ctx) error {
 }
 
 func formatSqlError(err error) string {
-	return "Database Error: " + err.Error()
+	log.Printf("Database error: %v", err)
+	return "An internal database error occurred"
 }

@@ -1,4 +1,4 @@
-.PHONY: dev build db-gen db-setup db-seed
+.PHONY: dev build up down status logs reset db-gen db-setup db-seed db-reset db-branch-create db-branch-switch db-branch-drop test test-e2e test-verbose
 
 dev:
 	go run cmd/api/main.go
@@ -11,9 +11,13 @@ db-gen:
 
 # Run after first `docker compose up` — creates profiles, app tables, triggers, and seeds dev user.
 # GoTrue must be running (it creates auth.users on first boot).
+POSTGREST_PASSWORD ?= $(shell grep ^POSTGREST_PASSWORD= .env | cut -d '=' -f2)
+
 db-setup:
 	@echo "Running post-GoTrue setup (profiles, app tables, triggers)..."
 	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/post_gotrue.sql
+	@echo "Syncing PostgREST authenticator password..."
+	@docker exec -i skeleton_postgres psql -U postgres -d app_database -c "ALTER ROLE authenticator WITH PASSWORD '$(POSTGREST_PASSWORD)';"
 	@echo "Seeding development user..."
 	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/seed.sql
 	@echo "Setup complete."
@@ -49,6 +53,35 @@ db-branch-drop:
 	@echo "Dropping database branch '$(BRANCH)'..."
 	@docker exec -i skeleton_postgres psql -U postgres -d postgres -c "DROP DATABASE IF EXISTS $(BRANCH);"
 	@echo "✅ Branch '$(BRANCH)' dropped permanently."
+
+up:
+	docker compose up -d
+
+down:
+	docker compose down
+
+status:
+	docker compose ps
+
+logs:
+	docker compose logs -f
+
+reset:
+	docker compose down -v
+	docker compose up -d
+
+db-reset:
+	@echo "Dropping and recreating database..."
+	@docker exec -i skeleton_postgres psql -U postgres -c "DROP DATABASE IF EXISTS app_database;"
+	@docker exec -i skeleton_postgres psql -U postgres -c "CREATE DATABASE app_database;"
+	@$(MAKE) db-setup
+	@echo "Database reset complete."
+
+test:
+	@go test -v ./tests/...
+
+test-verbose:
+	@go test -v -count=1 ./tests/...
 
 test-e2e:
 	@echo "Running End-to-End Architectural Tests..."

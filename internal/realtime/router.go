@@ -8,28 +8,24 @@ import (
 // GlobalHub is the instance used by the application
 var GlobalHub *Hub
 
-// RegisterWSRoute sets up the WebSocket endpoint.
+// RegisterWSRoute sets up the authenticated WebSocket endpoint.
 func RegisterWSRoute(app *fiber.App) {
 	GlobalHub = NewHub()
 	go GlobalHub.Run()
 	go GlobalHub.StartPGListener()
 
+	// JWT auth check runs before WebSocket upgrade
+	app.Use("/ws", RequireWSAuth())
+
 	app.Get("/ws", websocket.New(func(c *websocket.Conn) {
-		// When a client connects
 		GlobalHub.Register(c)
+		defer GlobalHub.Unregister(c)
 
-		defer func() {
-			GlobalHub.Unregister(c)
-		}()
-
-		// Keep connection alive and listen for optional client messages
 		for {
-			_, message, err := c.ReadMessage()
+			_, _, err := c.ReadMessage()
 			if err != nil {
 				break
 			}
-			// Optional: Echo or handle client-to-server messages
-			GlobalHub.Broadcast(string(message))
 		}
 	}))
 }

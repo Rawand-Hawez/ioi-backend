@@ -37,7 +37,7 @@ CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
   INSERT INTO public.profiles (id, email, role)
-  VALUES (new.id, new.email, COALESCE(new.raw_app_meta_data->>'role', 'user'));
+  VALUES (new.id, new.email, 'user');
   RETURN new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS public.todos (
 
 ALTER TABLE public.todos ENABLE ROW LEVEL SECURITY;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.todos TO authenticated;
+CREATE INDEX IF NOT EXISTS idx_todos_user_id ON public.todos(user_id);
 
 DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Users can only see their own todos' AND tablename = 'todos') THEN

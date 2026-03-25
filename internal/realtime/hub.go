@@ -48,16 +48,21 @@ func (h *Hub) Unregister(conn *websocket.Conn) {
 // Run starts the broadcast loop.
 func (h *Hub) Run() {
 	for message := range h.broadcast {
+		// Snapshot clients under lock
 		h.mu.Lock()
+		clients := make([]*websocket.Conn, 0, len(h.clients))
 		for client := range h.clients {
-			// Non-blocking send to avoid stalling the hub
-			if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
-				log.Printf("Error sending message to client %p: %v", client, err)
-				client.Close()
-				delete(h.clients, client)
-			}
+			clients = append(clients, client)
 		}
 		h.mu.Unlock()
+
+		// Write outside the lock so one slow client cannot stall all broadcasts
+		for _, client := range clients {
+			if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
+				log.Printf("Error sending message to client %p: %v", client, err)
+				h.Unregister(client)
+			}
+		}
 	}
 }
 

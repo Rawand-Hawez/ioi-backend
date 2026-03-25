@@ -25,6 +25,7 @@ type PostgresConfig struct {
 	User     string
 	Password string
 	Database string
+	SSLMode  string
 }
 
 // GoTrueConfig holds GoTrue authentication configuration
@@ -49,8 +50,9 @@ type MinIOConfig struct {
 
 // APIConfig holds API server configuration
 type APIConfig struct {
-	FiberPort string
-	RESTPort string
+	FiberPort   string
+	RESTPort    string
+	CORSOrigins string
 }
 
 var appConfig *Config
@@ -70,6 +72,7 @@ func Load() {
 			User:     getEnvRequired("POSTGRES_USER"),
 			Password: getEnvRequired("POSTGRES_PASSWORD"),
 			Database: getEnv("POSTGRES_DB", "app_database"),
+			SSLMode:  getEnv("POSTGRES_SSLMODE", "disable"),
 		},
 		GoTrue: GoTrueConfig{
 			JWTSecret: getEnvRequired("GOTRUE_JWT_SECRET"),
@@ -86,8 +89,9 @@ func Load() {
 			SecretKey: getEnv("MINIO_ROOT_PASSWORD", "minioadmin"),
 		},
 		API: APIConfig{
-			FiberPort: getEnv("API_PORT_FIBER", "8080"),
-			RESTPort: getEnv("API_PORT_REST", "3000"),
+			FiberPort:   getEnv("API_PORT_FIBER", "8080"),
+			RESTPort:    getEnv("API_PORT_REST", "3000"),
+			CORSOrigins: getEnv("CORS_ALLOWED_ORIGINS", "*"),
 		},
 	}
 
@@ -138,12 +142,13 @@ func (c *Config) Validate() error {
 
 // GetPostgresDSN returns the PostgreSQL connection string
 func (c *Config) GetPostgresDSN() string {
-	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
 		c.Postgres.User,
 		c.Postgres.Password,
 		c.Postgres.Host,
 		c.Postgres.Port,
 		c.Postgres.Database,
+		c.Postgres.SSLMode,
 	)
 }
 
@@ -159,7 +164,7 @@ func getEnv(key, defaultValue string) string {
 func getEnvRequired(key string) string {
 	value := os.Getenv(key)
 	if value == "" {
-		log.Printf("Warning: %s environment variable is not set", key)
+		log.Fatalf("FATAL: %s environment variable is required but not set", key)
 	}
 	return value
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -29,11 +30,22 @@ var (
 	once     sync.Once
 )
 
-// Init initializes the global connection pool
+// Init initializes the global connection pool with production-ready limits
 func Init(dsn string) error {
 	var initErr error
 	once.Do(func() {
-		pool, err := pgxpool.New(context.Background(), dsn)
+		poolConfig, err := pgxpool.ParseConfig(dsn)
+		if err != nil {
+			initErr = fmt.Errorf("failed to parse DSN: %w", err)
+			return
+		}
+		poolConfig.MaxConns = 25
+		poolConfig.MinConns = 5
+		poolConfig.MaxConnLifetime = 30 * time.Minute
+		poolConfig.MaxConnIdleTime = 5 * time.Minute
+		poolConfig.HealthCheckPeriod = 30 * time.Second
+
+		pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 		if err != nil {
 			initErr = fmt.Errorf("failed to create connection pool: %w", err)
 			return

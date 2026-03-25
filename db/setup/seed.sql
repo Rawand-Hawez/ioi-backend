@@ -1,5 +1,6 @@
--- 02_seed.sql
--- This scripts securely seeds the development user into GoTrue's database table
+-- seed.sql
+-- !! DEV ONLY — This user and password must NOT exist in production !!
+-- Seeds a development user into GoTrue's database table
 
 -- Ensure pgcrypto is enabled so we can natively hash the passwords with bcrypt
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";

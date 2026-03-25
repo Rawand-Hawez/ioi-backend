@@ -1,7 +1,7 @@
 # Multi-stage build for the Fiber API binary
 # Used in production / staging. For development, use `make dev` instead.
 
-FROM golang:1.23-alpine AS builder
+FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
 # Cache dependency downloads

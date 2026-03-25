@@ -73,7 +73,7 @@ services:
     ports:
       - "${API_PORT_REST:-3000}:3000"
     environment:
-      PGRST_DB_URI: postgres://authenticator:postgrest_dev_password@postgres:5432/${POSTGRES_DB}
+      PGRST_DB_URI: postgres://authenticator:${POSTGREST_PASSWORD}@postgres:5432/${POSTGRES_DB}
       PGRST_DB_SCHEMAS: public
       PGRST_DB_ANON_ROLE: web_anon
       PGRST_JWT_SECRET: ${GOTRUE_JWT_SECRET}
