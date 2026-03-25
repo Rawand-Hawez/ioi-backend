@@ -1,4 +1,4 @@
-.PHONY: dev build up down status logs reset db-gen db-setup db-seed db-reset db-branch-create db-branch-switch db-branch-drop test test-e2e test-verbose
+.PHONY: dev build up down status logs reset db-gen db-setup db-seed db-reset db-branch-create db-branch-switch db-branch-drop test test-e2e test-verbose up-prod down-prod
 
 dev:
 	go run cmd/api/main.go
@@ -76,6 +76,12 @@ db-reset:
 	@docker exec -i skeleton_postgres psql -U postgres -c "CREATE DATABASE app_database;"
 	@$(MAKE) db-setup
 	@echo "Database reset complete."
+
+up-prod:
+	docker compose -f docker-compose.prod.yml up -d --build
+
+down-prod:
+	docker compose -f docker-compose.prod.yml down
 
 test:
 	@go test -v ./tests/...

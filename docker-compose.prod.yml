@@ -1,0 +1,208 @@
+t# =============================================================================
+# PRODUCTION DOCKER COMPOSE
+# =============================================================================
+# Standalone production manifest — run independently of docker-compose.yml.
+# No host port bindings. All inter-service traffic stays inside Docker networks.
+# Public services (fiber, gotrue, postgrest) are reachable only through a
+# reverse proxy (nginx/traefik) connected to the external 'ioi_proxy' network.
+#
+# NETWORKS:
+#   ioi_internal  — isolated bridge, no internet, data stores only
+#   ioi_app       — bridge with internet access, app services
+#   ioi_proxy     — external, shared with your reverse proxy
+#
+# FIRST-TIME SETUP ON THE SERVER:
+#   docker network create ioi_proxy              # once per server
+#   docker compose -f docker-compose.prod.yml up -d --build
+#   make db-setup                                # run migrations
+#
+# PROXY ROUTING (internal service:port):
+#   Fiber API   →  skeleton_fiber:8080
+#   PostgREST   →  skeleton_postgrest:3000
+#   GoTrue      →  skeleton_gotrue:8081
+# =============================================================================
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # DATA STORES — ioi_internal only (no internet, no host ports)
+  # ---------------------------------------------------------------------------
+
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    container_name: skeleton_postgres
+    restart: always
+    logging: *logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "1.0"
+    networks:
+      - ioi_internal
+
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly
+    container_name: skeleton_dragonfly
+    restart: always
+    logging: *logging
+    # Fail fast at startup if password is not set — prevents an open cache in prod.
+    command: ["--requirepass", "${DRAGONFLY_PASSWORD:?DRAGONFLY_PASSWORD must be set for production}"]
+    volumes:
+      - dragonfly_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    networks:
+      - ioi_internal
+
+  # ---------------------------------------------------------------------------
+  # APP SERVICES — ioi_internal + ioi_app (internet access for SMTP, external APIs)
+  # ---------------------------------------------------------------------------
+
+  minio:
+    image: minio/minio
+    container_name: skeleton_minio
+    restart: always
+    logging: *logging
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
+    networks:
+      - ioi_internal
+      - ioi_app
+
+  gotrue:
+    image: supabase/gotrue:v2.132.3
+    container_name: skeleton_gotrue
+    restart: always
+    logging: *logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      GOTRUE_DB_DRIVER: ${GOTRUE_DB_DRIVER}
+      GOTRUE_DB_DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable&search_path=auth,public
+      GOTRUE_SITE_URL: ${GOTRUE_SITE_URL}
+      GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET}
+      # Public URL of GoTrue as seen by clients (e.g. https://auth.yourdomain.com)
+      API_EXTERNAL_URL: ${GOTRUE_EXTERNAL_URL:?GOTRUE_EXTERNAL_URL must be set (e.g. https://auth.yourdomain.com)}
+      GOTRUE_DISABLE_SIGNUP: ${GOTRUE_DISABLE_SIGNUP:-false}
+      # Set to 'false' in production — requires SMTP vars below
+      GOTRUE_MAILER_AUTOCONFIRM: ${GOTRUE_MAILER_AUTOCONFIRM:-false}
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.25"
+    networks:
+      - ioi_internal
+      - ioi_app
+      - ioi_proxy
+
+  postgrest:
+    image: postgrest/postgrest:v12.2.3
+    container_name: skeleton_postgrest
+    restart: always
+    logging: *logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${POSTGREST_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: web_anon
+      PGRST_JWT_SECRET: ${GOTRUE_JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.25"
+    networks:
+      - ioi_internal
+      - ioi_proxy
+
+  fiber:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: skeleton_fiber
+    restart: always
+    logging: *logging
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-disable}
+      GOTRUE_JWT_SECRET: ${GOTRUE_JWT_SECRET}
+      GOTRUE_SITE_URL: ${GOTRUE_SITE_URL}
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      DRAGONFLY_PASSWORD: ${DRAGONFLY_PASSWORD}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      API_PORT_FIBER: 8080
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "0.5"
+    networks:
+      - ioi_internal
+      - ioi_app
+      - ioi_proxy
+
+volumes:
+  pg_data:
+  dragonfly_data:
+  minio_data:
+
+networks:
+  ioi_internal:
+    driver: bridge
+    internal: true   # no outbound internet — data stores only
+  ioi_app:
+    driver: bridge   # outbound internet allowed — SMTP, external APIs
+  ioi_proxy:
+    external: true   # pre-created: docker network create ioi_proxy
+    name: ioi_proxy
