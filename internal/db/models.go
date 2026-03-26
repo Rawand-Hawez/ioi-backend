@@ -71,6 +71,16 @@ type Party struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Permission struct {
+	ID pgtype.UUID `json:"id"`
+	// Machine-readable permission identifier, e.g. sales.contract.activate
+	Key string `json:"key"`
+	// Domain classifier: inventory, sales, rentals, finance, sc, utility, approvals, admin
+	Module      string             `json:"module"`
+	Description pgtype.Text        `json:"description"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type Profile struct {
 	ID        pgtype.UUID        `json:"id"`
 	Email     string             `json:"email"`
@@ -116,6 +126,23 @@ type ResponsibilityAssignment struct {
 	Notes     pgtype.Text        `json:"notes"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Role struct {
+	ID          pgtype.UUID        `json:"id"`
+	Code        string             `json:"code"`
+	Name        string             `json:"name"`
+	Description pgtype.Text        `json:"description"`
+	IsActive    bool               `json:"is_active"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RolePermission struct {
+	ID           pgtype.UUID        `json:"id"`
+	RoleID       pgtype.UUID        `json:"role_id"`
+	PermissionID pgtype.UUID        `json:"permission_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 }
 
 type StructureNode struct {
@@ -194,6 +221,16 @@ type UnitOwnership struct {
 	// Ownership status: active or inactive
 	Status    string             `json:"status"`
 	Notes     pgtype.Text        `json:"notes"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserRoleScopeAssignment struct {
+	ID        pgtype.UUID        `json:"id"`
+	UserID    pgtype.UUID        `json:"user_id"`
+	RoleID    pgtype.UUID        `json:"role_id"`
+	ScopeType string             `json:"scope_type"`
+	ScopeID   pgtype.UUID        `json:"scope_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }

@@ -11,6 +11,9 @@ import (
 )
 
 type Querier interface {
+	AssignRoleToUser(ctx context.Context, arg AssignRoleToUserParams) (UserRoleScopeAssignment, error)
+	// Returns true if user has a specific permission through any active role
+	CheckUserPermission(ctx context.Context, arg CheckUserPermissionParams) (bool, error)
 	CloseResponsibilityAssignment(ctx context.Context, arg CloseResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
 	CloseUnitOwnership(ctx context.Context, arg CloseUnitOwnershipParams) (UnitOwnership, error)
 	CountBranches(ctx context.Context, arg CountBranchesParams) (int64, error)
@@ -41,9 +44,17 @@ type Querier interface {
 	GetBusinessEntity(ctx context.Context, id pgtype.UUID) (BusinessEntity, error)
 	GetBusinessEntityByCode(ctx context.Context, code string) (BusinessEntity, error)
 	GetParty(ctx context.Context, id pgtype.UUID) (Party, error)
+	GetPermission(ctx context.Context, id pgtype.UUID) (Permission, error)
 	GetProject(ctx context.Context, id pgtype.UUID) (Project, error)
+	GetRole(ctx context.Context, id pgtype.UUID) (Role, error)
 	GetStructureNode(ctx context.Context, id pgtype.UUID) (StructureNode, error)
 	GetUnit(ctx context.Context, id pgtype.UUID) (Unit, error)
+	// =============================================================================
+	// Permission Resolution (for middleware + /me/permissions)
+	// =============================================================================
+	// Returns all distinct permission keys for a user through their role assignments
+	GetUserPermissions(ctx context.Context, userID pgtype.UUID) ([]GetUserPermissionsRow, error)
+	GetUserRoleAssignment(ctx context.Context, id pgtype.UUID) (UserRoleScopeAssignment, error)
 	// ============================================================================
 	// BRANCH
 	// ============================================================================
@@ -58,6 +69,10 @@ type Querier interface {
 	// =============================================================================
 	ListParties(ctx context.Context, arg ListPartiesParams) ([]Party, error)
 	// =============================================================================
+	// Permissions
+	// =============================================================================
+	ListPermissions(ctx context.Context, module pgtype.Text) ([]Permission, error)
+	// =============================================================================
 	// Inventory Domain Queries
 	// =============================================================================
 	// =============================================================================
@@ -68,6 +83,17 @@ type Querier interface {
 	// Responsibility Assignments
 	// =============================================================================
 	ListResponsibilityAssignments(ctx context.Context, arg ListResponsibilityAssignmentsParams) ([]ResponsibilityAssignment, error)
+	// =============================================================================
+	// Role Permissions
+	// =============================================================================
+	ListRolePermissions(ctx context.Context, roleID pgtype.UUID) ([]Permission, error)
+	// =============================================================================
+	// Authorization Domain Queries
+	// =============================================================================
+	// =============================================================================
+	// Roles
+	// =============================================================================
+	ListRoles(ctx context.Context, isActive pgtype.Bool) ([]Role, error)
 	// =============================================================================
 	// Structure Nodes
 	// =============================================================================
@@ -80,6 +106,11 @@ type Querier interface {
 	// Units
 	// =============================================================================
 	ListUnits(ctx context.Context, arg ListUnitsParams) ([]Unit, error)
+	// =============================================================================
+	// User Role Scope Assignments
+	// =============================================================================
+	ListUserRoleAssignments(ctx context.Context, userID pgtype.UUID) ([]UserRoleScopeAssignment, error)
+	RemoveRoleFromUser(ctx context.Context, id pgtype.UUID) (UserRoleScopeAssignment, error)
 	UpdateBranch(ctx context.Context, arg UpdateBranchParams) (Branch, error)
 	UpdateBusinessEntity(ctx context.Context, arg UpdateBusinessEntityParams) (BusinessEntity, error)
 	UpdateParty(ctx context.Context, arg UpdatePartyParams) (Party, error)

@@ -69,4 +69,23 @@ func SetupRoutes(app *fiber.App) {
 	// Phase 3: Responsibility assignment close route
 	responsibilityAssignments := api.Group("/responsibility-assignments", middleware.RequireAuth(), middleware.InjectGUCVariables())
 	responsibilityAssignments.Post("/:id/close", handlers.CloseResponsibilityAssignment)
+
+	// Phase 4: Authorization domain routes
+	roles := api.Group("/roles", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	roles.Get("/", handlers.ListRoles)
+	roles.Get("/:id/permissions", handlers.ListRolePermissions)
+
+	permissions := api.Group("/permissions", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	permissions.Get("/", handlers.ListPermissions)
+
+	users := api.Group("/users", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	users.Get("/:id/role-assignments", handlers.ListUserRoleAssignments)
+	users.Post("/:id/role-assignments", handlers.AssignRoleToUser)
+
+	userRoleAssignments := api.Group("/user-role-assignments", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	userRoleAssignments.Get("/:id", handlers.GetUserRoleAssignment)
+	userRoleAssignments.Delete("/:id", handlers.RemoveRoleFromUser)
+
+	me := api.Group("/me", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	me.Get("/permissions", handlers.GetMyPermissions)
 }
