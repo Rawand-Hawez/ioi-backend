@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"ioibackend/internal/config"
+	"IOI-real-estate-backend/internal/config"
 
 	"github.com/jackc/pgx/v5"
 )

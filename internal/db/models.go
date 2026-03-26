@@ -8,6 +8,69 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Branch struct {
+	ID               pgtype.UUID        `json:"id"`
+	BusinessEntityID pgtype.UUID        `json:"business_entity_id"`
+	Code             string             `json:"code"`
+	Name             string             `json:"name"`
+	DisplayName      pgtype.Text        `json:"display_name"`
+	Country          pgtype.Text        `json:"country"`
+	City             pgtype.Text        `json:"city"`
+	AddressText      pgtype.Text        `json:"address_text"`
+	Phone            pgtype.Text        `json:"phone"`
+	Email            pgtype.Text        `json:"email"`
+	Status           string             `json:"status"`
+	IsActive         bool               `json:"is_active"`
+	Notes            pgtype.Text        `json:"notes"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type BusinessEntity struct {
+	ID              pgtype.UUID        `json:"id"`
+	Code            string             `json:"code"`
+	Name            string             `json:"name"`
+	DisplayName     pgtype.Text        `json:"display_name"`
+	DefaultCurrency string             `json:"default_currency"`
+	Country         pgtype.Text        `json:"country"`
+	RegistrationNo  pgtype.Text        `json:"registration_no"`
+	TaxNo           pgtype.Text        `json:"tax_no"`
+	Status          string             `json:"status"`
+	IsActive        bool               `json:"is_active"`
+	Notes           pgtype.Text        `json:"notes"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Party struct {
+	ID pgtype.UUID `json:"id"`
+	// Type of party: person or organization
+	PartyType         string      `json:"party_type"`
+	PartyCode         string      `json:"party_code"`
+	DisplayName       string      `json:"display_name"`
+	FullName          pgtype.Text `json:"full_name"`
+	FirstName         pgtype.Text `json:"first_name"`
+	MiddleName        pgtype.Text `json:"middle_name"`
+	LastName          pgtype.Text `json:"last_name"`
+	OrganizationName  pgtype.Text `json:"organization_name"`
+	PrimaryPhone      string      `json:"primary_phone"`
+	SecondaryPhone    pgtype.Text `json:"secondary_phone"`
+	PrimaryEmail      pgtype.Text `json:"primary_email"`
+	DateOfBirth       pgtype.Date `json:"date_of_birth"`
+	Nationality       pgtype.Text `json:"nationality"`
+	NationalIDNo      pgtype.Text `json:"national_id_no"`
+	PassportNo        pgtype.Text `json:"passport_no"`
+	RegistrationNo    pgtype.Text `json:"registration_no"`
+	TaxNo             pgtype.Text `json:"tax_no"`
+	PreferredLanguage string      `json:"preferred_language"`
+	LegacyRef         pgtype.Text `json:"legacy_ref"`
+	Notes             pgtype.Text `json:"notes"`
+	// Party status: active, inactive, or blocked
+	Status    string             `json:"status"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Profile struct {
 	ID        pgtype.UUID        `json:"id"`
 	Email     string             `json:"email"`
@@ -16,10 +79,121 @@ type Profile struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Project struct {
+	ID               pgtype.UUID `json:"id"`
+	BusinessEntityID pgtype.UUID `json:"business_entity_id"`
+	PrimaryBranchID  pgtype.UUID `json:"primary_branch_id"`
+	Code             string      `json:"code"`
+	Name             string      `json:"name"`
+	DisplayName      pgtype.Text `json:"display_name"`
+	// residential, commercial, mixed, managed
+	ProjectType string `json:"project_type"`
+	// tower, compound, villa_community, mixed, flat
+	StructureType   string             `json:"structure_type"`
+	Status          string             `json:"status"`
+	Country         string             `json:"country"`
+	City            pgtype.Text        `json:"city"`
+	DistrictArea    pgtype.Text        `json:"district_area"`
+	AddressText     pgtype.Text        `json:"address_text"`
+	DefaultCurrency string             `json:"default_currency"`
+	LaunchDate      pgtype.Date        `json:"launch_date"`
+	HandoverDate    pgtype.Date        `json:"handover_date"`
+	Notes           pgtype.Text        `json:"notes"`
+	IsActive        bool               `json:"is_active"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ResponsibilityAssignment struct {
+	ID                 pgtype.UUID `json:"id"`
+	UnitID             pgtype.UUID `json:"unit_id"`
+	PartyID            pgtype.UUID `json:"party_id"`
+	ResponsibilityType string      `json:"responsibility_type"`
+	EffectiveFrom      pgtype.Date `json:"effective_from"`
+	EffectiveTo        pgtype.Date `json:"effective_to"`
+	// Assignment status: active or inactive
+	Status    string             `json:"status"`
+	Notes     pgtype.Text        `json:"notes"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type StructureNode struct {
+	ID                    pgtype.UUID `json:"id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	ParentStructureNodeID pgtype.UUID `json:"parent_structure_node_id"`
+	// building, tower, block, cluster, floor
+	NodeType     string             `json:"node_type"`
+	Code         string             `json:"code"`
+	Name         string             `json:"name"`
+	DisplayOrder int32              `json:"display_order"`
+	Status       string             `json:"status"`
+	IsActive     bool               `json:"is_active"`
+	Notes        pgtype.Text        `json:"notes"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Todo struct {
 	ID         pgtype.UUID        `json:"id"`
 	UserID     pgtype.UUID        `json:"user_id"`
 	Task       string             `json:"task"`
 	IsComplete bool               `json:"is_complete"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type Unit struct {
+	ID               pgtype.UUID `json:"id"`
+	BusinessEntityID pgtype.UUID `json:"business_entity_id"`
+	BranchID         pgtype.UUID `json:"branch_id"`
+	ProjectID        pgtype.UUID `json:"project_id"`
+	StructureNodeID  pgtype.UUID `json:"structure_node_id"`
+	ParentUnitID     pgtype.UUID `json:"parent_unit_id"`
+	// apartment, villa, retail, office, parking, storage, townhouse
+	UnitType string `json:"unit_type"`
+	// sale_only, rent_only, sale_or_rent, internal_use, inactive
+	CommercialDisposition string         `json:"commercial_disposition"`
+	UnitCode              string         `json:"unit_code"`
+	DisplayCode           pgtype.Text    `json:"display_code"`
+	UnitNo                pgtype.Text    `json:"unit_no"`
+	FloorValue            pgtype.Text    `json:"floor_value"`
+	FloorSortValue        pgtype.Int4    `json:"floor_sort_value"`
+	SectionNo             pgtype.Text    `json:"section_no"`
+	EntranceNo            pgtype.Text    `json:"entrance_no"`
+	BedroomCount          pgtype.Int2    `json:"bedroom_count"`
+	BathroomCount         pgtype.Int2    `json:"bathroom_count"`
+	AreaGrossSqm          pgtype.Numeric `json:"area_gross_sqm"`
+	AreaNetSqm            pgtype.Numeric `json:"area_net_sqm"`
+	AreaChargeableSqm     pgtype.Numeric `json:"area_chargeable_sqm"`
+	LandAreaSqm           pgtype.Numeric `json:"land_area_sqm"`
+	FacingDirection       pgtype.Text    `json:"facing_direction"`
+	// available, reserved, sold, leased, owner_occupied, inactive
+	InventoryStatus string `json:"inventory_status"`
+	// available, reserved, sold, not_for_sale
+	SalesStatus string `json:"sales_status"`
+	// vacant, occupied, owner_occupied
+	OccupancyStatus string `json:"occupancy_status"`
+	// none, under_maintenance, restricted
+	MaintenanceStatus string             `json:"maintenance_status"`
+	ListPriceAmount   pgtype.Numeric     `json:"list_price_amount"`
+	ListPriceCurrency string             `json:"list_price_currency"`
+	ValuationAmount   pgtype.Numeric     `json:"valuation_amount"`
+	IsActive          bool               `json:"is_active"`
+	MetadataJson      []byte             `json:"metadata_json"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UnitOwnership struct {
+	ID              pgtype.UUID    `json:"id"`
+	UnitID          pgtype.UUID    `json:"unit_id"`
+	PartyID         pgtype.UUID    `json:"party_id"`
+	SharePercentage pgtype.Numeric `json:"share_percentage"`
+	EffectiveFrom   pgtype.Date    `json:"effective_from"`
+	EffectiveTo     pgtype.Date    `json:"effective_to"`
+	// Ownership status: active or inactive
+	Status    string             `json:"status"`
+	Notes     pgtype.Text        `json:"notes"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }

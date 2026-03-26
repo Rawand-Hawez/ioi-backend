@@ -1,7 +1,7 @@
 package realtime
 
 import (
-	"ioibackend/internal/config"
+	"IOI-real-estate-backend/internal/config"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"

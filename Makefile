@@ -16,6 +16,12 @@ POSTGREST_PASSWORD ?= $(shell grep ^POSTGREST_PASSWORD= .env | cut -d '=' -f2)
 db-setup:
 	@echo "Running post-GoTrue setup (profiles, app tables, triggers)..."
 	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/post_gotrue.sql
+	@echo "Creating business structure tables..."
+	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/business-structure.sql
+	@echo "Creating inventory tables..."
+	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/inventory.sql
+	@echo "Creating party tables..."
+	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/party.sql
 	@echo "Syncing PostgREST authenticator password..."
 	@docker exec -i skeleton_postgres psql -U postgres -d app_database -c "ALTER ROLE authenticator WITH PASSWORD '$(POSTGREST_PASSWORD)';"
 	@echo "Seeding development user..."
@@ -84,12 +90,12 @@ down-prod:
 	docker compose -f docker-compose.prod.yml down
 
 test:
-	@go test -v ./tests/...
+	@set -a && . ./.env && set +a && go test -v ./tests/...
 
 test-verbose:
-	@go test -v -count=1 ./tests/...
+	@set -a && . ./.env && set +a && go test -v -count=1 ./tests/...
 
 test-e2e:
 	@echo "Running End-to-End Architectural Tests..."
-	@go test -v ./tests/e2e_test.go
+	@set -a && . ./.env && set +a && go test -v ./tests/e2e_test.go
 

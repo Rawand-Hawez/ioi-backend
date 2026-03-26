@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
-	"ioibackend/internal/api/handlers"
-	"ioibackend/internal/api/router"
-	"ioibackend/internal/cache"
-	"ioibackend/internal/config"
-	"ioibackend/internal/db/pool"
-	"ioibackend/internal/realtime"
+	"IOI-real-estate-backend/internal/api/handlers"
+	"IOI-real-estate-backend/internal/api/router"
+	"IOI-real-estate-backend/internal/cache"
+	"IOI-real-estate-backend/internal/config"
+	"IOI-real-estate-backend/internal/db/pool"
+	"IOI-real-estate-backend/internal/realtime"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/compress"

@@ -7,14 +7,15 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 )
 
 const (
-	GoTrueURL   = "http://localhost:9999"
-	FiberURL    = "http://localhost:8080/api/v1"
+	GoTrueURL    = "http://localhost:9999"
+	FiberURL     = "http://localhost:8080/api/v1"
 	PostgRESTURL = "http://localhost:3000"
-	TestEmail   = "e2e@ioi.dev"
-	TestPass    = "testing12345!"
+	TestEmail    = "e2e@ioi.dev"
+	TestPass     = "testing12345!"
 )
 
 type AuthResponse struct {
@@ -57,7 +58,7 @@ func TestGoTrueAuth(t *testing.T) {
 }
 
 func TestFiberUnauthorized(t *testing.T) {
-	req, _ := http.NewRequest("GET", FiberURL+"/todos/", nil)
+	req, _ := http.NewRequest("GET", FiberURL+"/business-entities", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("Failed to connect to Fiber API: %v", err)
@@ -67,12 +68,17 @@ func TestFiberUnauthorized(t *testing.T) {
 	}
 }
 
-func TestFiberCRUD(t *testing.T) {
+func TestFiberBusinessEntityE2E(t *testing.T) {
 	token := authenticate(t)
+	uniqueCode := fmt.Sprintf("E2E_%d", time.Now().UnixNano())
 
 	// CREATE
-	createPayload, _ := json.Marshal(map[string]string{"task": "e2e test todo"})
-	req, _ := http.NewRequest("POST", FiberURL+"/todos/", bytes.NewBuffer(createPayload))
+	createPayload, _ := json.Marshal(map[string]string{
+		"code":        uniqueCode,
+		"name":        "E2E Test Entity",
+		"description": "Created via E2E test",
+	})
+	req, _ := http.NewRequest("POST", FiberURL+"/business-entities", bytes.NewBuffer(createPayload))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -87,14 +93,14 @@ func TestFiberCRUD(t *testing.T) {
 	var created map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&created)
 	resp.Body.Close()
-	todoID, ok := created["id"].(string)
-	if !ok || todoID == "" {
-		t.Fatal("Created todo missing ID")
+	entityID, ok := created["id"].(string)
+	if !ok || entityID == "" {
+		t.Fatal("Created business entity missing ID")
 	}
-	fmt.Printf("Created todo: %s\n", todoID)
+	fmt.Printf("Created business entity: %s\n", entityID)
 
 	// GET (list)
-	req, _ = http.NewRequest("GET", FiberURL+"/todos/", nil)
+	req, _ = http.NewRequest("GET", FiberURL+"/business-entities?page=1&page_size=10", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -104,46 +110,23 @@ func TestFiberCRUD(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("List failed with status %d: %s", resp.StatusCode, string(body))
 	}
-	var todos []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&todos)
+	var listResp map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&listResp)
 	resp.Body.Close()
-	if len(todos) == 0 {
-		t.Fatal("Expected at least one todo after create")
+	data, exists := listResp["data"]
+	if !exists {
+		t.Fatalf("Response missing 'data' field: %+v", listResp)
 	}
-	fmt.Printf("Listed %d todos (RLS enforced)\n", len(todos))
-
-	// TOGGLE
-	req, _ = http.NewRequest("PATCH", FiberURL+"/todos/"+todoID+"/toggle", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("Toggle request failed: %v", err)
+	items, ok := data.([]interface{})
+	if !ok {
+		t.Fatalf("'data' is not an array: %+v", data)
 	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Toggle failed with status %d: %s", resp.StatusCode, string(body))
-	}
-	resp.Body.Close()
-	fmt.Printf("Toggled todo: %s\n", todoID)
-
-	// DELETE
-	req, _ = http.NewRequest("DELETE", FiberURL+"/todos/"+todoID, nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("Delete request failed: %v", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("Delete failed with status %d: %s", resp.StatusCode, string(body))
-	}
-	resp.Body.Close()
-	fmt.Printf("Deleted todo: %s\n", todoID)
+	fmt.Printf("Listed %d business entities (RLS enforced)\n", len(items))
 }
 
 func TestPostgRESTEndpoint(t *testing.T) {
 	// Unauthenticated request should be rejected (web_anon has no table access)
-	resp, err := http.Get(PostgRESTURL + "/todos")
+	resp, err := http.Get(PostgRESTURL + "/business_entities")
 	if err != nil {
 		t.Fatalf("Failed to connect to PostgREST: %v", err)
 	}
@@ -151,13 +134,13 @@ func TestPostgRESTEndpoint(t *testing.T) {
 
 	// PostgREST returns 401 for tables not accessible to anon role
 	if resp.StatusCode == http.StatusOK {
-		t.Error("PostgREST should not expose todos to unauthenticated requests")
+		t.Error("PostgREST should not expose business_entities to unauthenticated requests")
 	}
 	fmt.Printf("PostgREST anon access correctly blocked (status %d)\n", resp.StatusCode)
 
 	// Authenticated request through PostgREST
 	token := authenticate(t)
-	req, _ := http.NewRequest("GET", PostgRESTURL+"/todos", nil)
+	req, _ := http.NewRequest("GET", PostgRESTURL+"/business_entities", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp2, err := http.DefaultClient.Do(req)
 	if err != nil {

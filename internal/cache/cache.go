@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"ioibackend/internal/config"
+	"IOI-real-estate-backend/internal/config"
 
 	"github.com/redis/go-redis/v9"
 )

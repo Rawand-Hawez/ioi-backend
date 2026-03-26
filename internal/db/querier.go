@@ -11,13 +11,85 @@ import (
 )
 
 type Querier interface {
-	CreateTodoRLS(ctx context.Context, task string) (Todo, error)
-	DeleteTodoRLS(ctx context.Context, id pgtype.UUID) error
-	GetTodoByIDRLS(ctx context.Context, id pgtype.UUID) (Todo, error)
-	// RLS-based queries (rely on auth.uid() via GUC variables)
-	// These must be used within a transaction with GUC injection
-	GetTodosRLS(ctx context.Context) ([]Todo, error)
-	ToggleTodoRLS(ctx context.Context, id pgtype.UUID) error
+	CloseResponsibilityAssignment(ctx context.Context, arg CloseResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
+	CloseUnitOwnership(ctx context.Context, arg CloseUnitOwnershipParams) (UnitOwnership, error)
+	CountBranches(ctx context.Context, arg CountBranchesParams) (int64, error)
+	CountBranchesByBusinessEntity(ctx context.Context, businessEntityID pgtype.UUID) (int64, error)
+	CountBusinessEntities(ctx context.Context, isActive pgtype.Bool) (int64, error)
+	CountParties(ctx context.Context, arg CountPartiesParams) (int64, error)
+	CountProjects(ctx context.Context, arg CountProjectsParams) (int64, error)
+	CountResponsibilityAssignments(ctx context.Context, arg CountResponsibilityAssignmentsParams) (int64, error)
+	CountStructureNodes(ctx context.Context, arg CountStructureNodesParams) (int64, error)
+	CountUnitOwnerships(ctx context.Context, arg CountUnitOwnershipsParams) (int64, error)
+	CountUnits(ctx context.Context, arg CountUnitsParams) (int64, error)
+	CreateBranch(ctx context.Context, arg CreateBranchParams) (Branch, error)
+	CreateBusinessEntity(ctx context.Context, arg CreateBusinessEntityParams) (BusinessEntity, error)
+	CreateParty(ctx context.Context, arg CreatePartyParams) (Party, error)
+	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
+	CreateResponsibilityAssignment(ctx context.Context, arg CreateResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
+	CreateStructureNode(ctx context.Context, arg CreateStructureNodeParams) (StructureNode, error)
+	CreateUnit(ctx context.Context, arg CreateUnitParams) (Unit, error)
+	CreateUnitOwnership(ctx context.Context, arg CreateUnitOwnershipParams) (UnitOwnership, error)
+	DeactivateBranch(ctx context.Context, id pgtype.UUID) error
+	DeactivateBusinessEntity(ctx context.Context, id pgtype.UUID) error
+	DeactivateProject(ctx context.Context, id pgtype.UUID) error
+	DeactivateStructureNode(ctx context.Context, id pgtype.UUID) error
+	DeactivateUnit(ctx context.Context, id pgtype.UUID) error
+	GetActiveResponsibilityAssignment(ctx context.Context, arg GetActiveResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
+	GetBranch(ctx context.Context, id pgtype.UUID) (Branch, error)
+	GetBranchByCode(ctx context.Context, arg GetBranchByCodeParams) (Branch, error)
+	GetBusinessEntity(ctx context.Context, id pgtype.UUID) (BusinessEntity, error)
+	GetBusinessEntityByCode(ctx context.Context, code string) (BusinessEntity, error)
+	GetParty(ctx context.Context, id pgtype.UUID) (Party, error)
+	GetProject(ctx context.Context, id pgtype.UUID) (Project, error)
+	GetStructureNode(ctx context.Context, id pgtype.UUID) (StructureNode, error)
+	GetUnit(ctx context.Context, id pgtype.UUID) (Unit, error)
+	// ============================================================================
+	// BRANCH
+	// ============================================================================
+	ListBranches(ctx context.Context, arg ListBranchesParams) ([]Branch, error)
+	// backend/db/queries/business_structure.sql
+	ListBusinessEntities(ctx context.Context, arg ListBusinessEntitiesParams) ([]BusinessEntity, error)
+	// =============================================================================
+	// Party Domain Queries
+	// =============================================================================
+	// =============================================================================
+	// Parties
+	// =============================================================================
+	ListParties(ctx context.Context, arg ListPartiesParams) ([]Party, error)
+	// =============================================================================
+	// Inventory Domain Queries
+	// =============================================================================
+	// =============================================================================
+	// Projects
+	// =============================================================================
+	ListProjects(ctx context.Context, arg ListProjectsParams) ([]Project, error)
+	// =============================================================================
+	// Responsibility Assignments
+	// =============================================================================
+	ListResponsibilityAssignments(ctx context.Context, arg ListResponsibilityAssignmentsParams) ([]ResponsibilityAssignment, error)
+	// =============================================================================
+	// Structure Nodes
+	// =============================================================================
+	ListStructureNodes(ctx context.Context, arg ListStructureNodesParams) ([]StructureNode, error)
+	// =============================================================================
+	// Unit Ownerships
+	// =============================================================================
+	ListUnitOwnerships(ctx context.Context, arg ListUnitOwnershipsParams) ([]UnitOwnership, error)
+	// =============================================================================
+	// Units
+	// =============================================================================
+	ListUnits(ctx context.Context, arg ListUnitsParams) ([]Unit, error)
+	UpdateBranch(ctx context.Context, arg UpdateBranchParams) (Branch, error)
+	UpdateBusinessEntity(ctx context.Context, arg UpdateBusinessEntityParams) (BusinessEntity, error)
+	UpdateParty(ctx context.Context, arg UpdatePartyParams) (Party, error)
+	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
+	UpdateStructureNode(ctx context.Context, arg UpdateStructureNodeParams) (StructureNode, error)
+	UpdateUnit(ctx context.Context, arg UpdateUnitParams) (Unit, error)
+	// Permission: inventory.unit.edit_code (per technical-specs.md Section 12.2)
+	UpdateUnitCode(ctx context.Context, arg UpdateUnitCodeParams) (Unit, error)
+	UpdateUnitInventoryStatus(ctx context.Context, arg UpdateUnitInventoryStatusParams) error
+	UpdateUnitOccupancyStatus(ctx context.Context, arg UpdateUnitOccupancyStatusParams) error
 }
 
 var _ Querier = (*Queries)(nil)
