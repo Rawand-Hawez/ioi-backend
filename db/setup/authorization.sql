@@ -368,9 +368,12 @@ INSERT INTO public.permissions (key, module, description) VALUES
     ('utility.prepaid.adjust', 'utility', 'Adjust prepaid utility balances'),
     -- Approvals
     ('approvals.request.decide', 'approvals', 'Decide on approval requests'),
+    ('approvals.policy.manage', 'approvals', 'Manage approval policies'),
     -- Admin
     ('admin.users.manage', 'admin', 'Manage user accounts'),
-    ('admin.roles.assign', 'admin', 'Assign roles to users')
+    ('admin.roles.assign', 'admin', 'Assign roles to users'),
+    -- Audit
+    ('audit.log.view', 'audit', 'View audit logs')
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================================

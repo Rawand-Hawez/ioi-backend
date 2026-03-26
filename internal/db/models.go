@@ -8,6 +8,72 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ApprovalPolicy struct {
+	ID                     pgtype.UUID        `json:"id"`
+	BusinessEntityID       pgtype.UUID        `json:"business_entity_id"`
+	Code                   string             `json:"code"`
+	Name                   string             `json:"name"`
+	Module                 string             `json:"module"`
+	RequestType            string             `json:"request_type"`
+	MinApprovers           int16              `json:"min_approvers"`
+	PreventSelfApproval    bool               `json:"prevent_self_approval"`
+	ApproverRoleID         pgtype.UUID        `json:"approver_role_id"`
+	AutoApproveBelowAmount pgtype.Numeric     `json:"auto_approve_below_amount"`
+	ExpiryHours            pgtype.Int4        `json:"expiry_hours"`
+	IsActive               bool               `json:"is_active"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ApprovalRequest struct {
+	ID                  pgtype.UUID        `json:"id"`
+	BusinessEntityID    pgtype.UUID        `json:"business_entity_id"`
+	BranchID            pgtype.UUID        `json:"branch_id"`
+	ApprovalPolicyID    pgtype.UUID        `json:"approval_policy_id"`
+	Module              string             `json:"module"`
+	RequestType         string             `json:"request_type"`
+	SourceRecordType    string             `json:"source_record_type"`
+	SourceRecordID      pgtype.UUID        `json:"source_record_id"`
+	RequestedByUserID   pgtype.UUID        `json:"requested_by_user_id"`
+	AssignedToUserID    pgtype.UUID        `json:"assigned_to_user_id"`
+	Status              string             `json:"status"`
+	SubmittedAt         pgtype.Timestamptz `json:"submitted_at"`
+	DecidedAt           pgtype.Timestamptz `json:"decided_at"`
+	DecisionReason      pgtype.Text        `json:"decision_reason"`
+	PayloadSnapshotJson []byte             `json:"payload_snapshot_json"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ApprovalRequestApprover struct {
+	ID                pgtype.UUID        `json:"id"`
+	ApprovalRequestID pgtype.UUID        `json:"approval_request_id"`
+	UserID            pgtype.UUID        `json:"user_id"`
+	Decision          pgtype.Text        `json:"decision"`
+	DecidedAt         pgtype.Timestamptz `json:"decided_at"`
+	DecisionReason    pgtype.Text        `json:"decision_reason"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type AuditLog struct {
+	ID                       pgtype.UUID        `json:"id"`
+	EventTime                pgtype.Timestamptz `json:"event_time"`
+	UserID                   pgtype.UUID        `json:"user_id"`
+	Module                   string             `json:"module"`
+	ActionType               string             `json:"action_type"`
+	EntityType               string             `json:"entity_type"`
+	EntityID                 pgtype.UUID        `json:"entity_id"`
+	ScopeType                string             `json:"scope_type"`
+	ScopeID                  pgtype.UUID        `json:"scope_id"`
+	ResultStatus             string             `json:"result_status"`
+	Reason                   pgtype.Text        `json:"reason"`
+	SummaryText              string             `json:"summary_text"`
+	BeforeSnapshotJson       []byte             `json:"before_snapshot_json"`
+	AfterSnapshotJson        []byte             `json:"after_snapshot_json"`
+	RelatedApprovalRequestID pgtype.UUID        `json:"related_approval_request_id"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+}
+
 type Branch struct {
 	ID               pgtype.UUID        `json:"id"`
 	BusinessEntityID pgtype.UUID        `json:"business_entity_id"`
@@ -42,6 +108,46 @@ type BusinessEntity struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type CreditBalance struct {
+	ID                 pgtype.UUID        `json:"id"`
+	BusinessEntityID   pgtype.UUID        `json:"business_entity_id"`
+	BranchID           pgtype.UUID        `json:"branch_id"`
+	PartyID            pgtype.UUID        `json:"party_id"`
+	SourceModule       pgtype.Text        `json:"source_module"`
+	SourceRecordType   pgtype.Text        `json:"source_record_type"`
+	SourceRecordID     pgtype.UUID        `json:"source_record_id"`
+	OriginPaymentID    pgtype.UUID        `json:"origin_payment_id"`
+	OriginAdjustmentID pgtype.UUID        `json:"origin_adjustment_id"`
+	CurrencyCode       string             `json:"currency_code"`
+	AmountTotal        pgtype.Numeric     `json:"amount_total"`
+	AmountUsed         pgtype.Numeric     `json:"amount_used"`
+	AmountRemaining    pgtype.Numeric     `json:"amount_remaining"`
+	Status             string             `json:"status"`
+	Reason             string             `json:"reason"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FinancialAdjustment struct {
+	ID                pgtype.UUID        `json:"id"`
+	BusinessEntityID  pgtype.UUID        `json:"business_entity_id"`
+	BranchID          pgtype.UUID        `json:"branch_id"`
+	PartyID           pgtype.UUID        `json:"party_id"`
+	SourceModule      string             `json:"source_module"`
+	SourceRecordType  string             `json:"source_record_type"`
+	SourceRecordID    pgtype.UUID        `json:"source_record_id"`
+	AdjustmentType    string             `json:"adjustment_type"`
+	Amount            pgtype.Numeric     `json:"amount"`
+	CurrencyCode      string             `json:"currency_code"`
+	EffectiveDate     pgtype.Date        `json:"effective_date"`
+	Status            string             `json:"status"`
+	Reason            string             `json:"reason"`
+	RequestedByUserID pgtype.UUID        `json:"requested_by_user_id"`
+	ApprovedByUserID  pgtype.UUID        `json:"approved_by_user_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Party struct {
 	ID pgtype.UUID `json:"id"`
 	// Type of party: person or organization
@@ -69,6 +175,38 @@ type Party struct {
 	Status    string             `json:"status"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Payment struct {
+	ID               pgtype.UUID        `json:"id"`
+	BusinessEntityID pgtype.UUID        `json:"business_entity_id"`
+	BranchID         pgtype.UUID        `json:"branch_id"`
+	PartyID          pgtype.UUID        `json:"party_id"`
+	PaymentNo        string             `json:"payment_no"`
+	ReceiptNo        pgtype.Text        `json:"receipt_no"`
+	PaymentDate      pgtype.Date        `json:"payment_date"`
+	PaymentMethod    string             `json:"payment_method"`
+	CurrencyCode     string             `json:"currency_code"`
+	AmountReceived   pgtype.Numeric     `json:"amount_received"`
+	UnappliedAmount  pgtype.Numeric     `json:"unapplied_amount"`
+	Status           string             `json:"status"`
+	ReferenceNo      pgtype.Text        `json:"reference_no"`
+	Notes            pgtype.Text        `json:"notes"`
+	ReceivedByUserID pgtype.UUID        `json:"received_by_user_id"`
+	PostedAt         pgtype.Timestamptz `json:"posted_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PaymentAllocation struct {
+	ID              pgtype.UUID        `json:"id"`
+	PaymentID       pgtype.UUID        `json:"payment_id"`
+	ReceivableID    pgtype.UUID        `json:"receivable_id"`
+	AllocatedAmount pgtype.Numeric     `json:"allocated_amount"`
+	AllocationDate  pgtype.Date        `json:"allocation_date"`
+	AllocationOrder int16              `json:"allocation_order"`
+	Notes           pgtype.Text        `json:"notes"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type Permission struct {
@@ -112,6 +250,30 @@ type Project struct {
 	IsActive        bool               `json:"is_active"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Receivable struct {
+	ID                pgtype.UUID        `json:"id"`
+	BusinessEntityID  pgtype.UUID        `json:"business_entity_id"`
+	BranchID          pgtype.UUID        `json:"branch_id"`
+	PartyID           pgtype.UUID        `json:"party_id"`
+	UnitID            pgtype.UUID        `json:"unit_id"`
+	SourceModule      string             `json:"source_module"`
+	SourceRecordType  string             `json:"source_record_type"`
+	SourceRecordID    pgtype.UUID        `json:"source_record_id"`
+	ReceivableNo      pgtype.Text        `json:"receivable_no"`
+	ReceivableDate    pgtype.Date        `json:"receivable_date"`
+	DueDate           pgtype.Date        `json:"due_date"`
+	CurrencyCode      string             `json:"currency_code"`
+	OriginalAmount    pgtype.Numeric     `json:"original_amount"`
+	AdjustedAmount    pgtype.Numeric     `json:"adjusted_amount"`
+	PaidAmount        pgtype.Numeric     `json:"paid_amount"`
+	CreditedAmount    pgtype.Numeric     `json:"credited_amount"`
+	OutstandingAmount pgtype.Numeric     `json:"outstanding_amount"`
+	Status            string             `json:"status"`
+	Notes             pgtype.Text        `json:"notes"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ResponsibilityAssignment struct {

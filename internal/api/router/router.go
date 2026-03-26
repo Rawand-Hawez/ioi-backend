@@ -88,4 +88,53 @@ func SetupRoutes(app *fiber.App) {
 
 	me := api.Group("/me", middleware.RequireAuth(), middleware.InjectGUCVariables())
 	me.Get("/permissions", handlers.GetMyPermissions)
+
+	// Phase 5: Shared Finance routes
+	receivables := api.Group("/receivables", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	receivables.Get("/", handlers.ListReceivables)
+	receivables.Get("/:id", handlers.GetReceivable)
+	receivables.Post("/", middleware.RequirePermission("finance.receivable.manual"), handlers.CreateReceivable)
+
+	payments := api.Group("/payments", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	payments.Get("/", handlers.ListPayments)
+	payments.Get("/:id", handlers.GetPayment)
+	payments.Post("/", middleware.RequirePermission("finance.payment.create"), handlers.CreatePayment)
+	payments.Post("/:id/post", middleware.RequirePermission("finance.payment.post"), handlers.PostPayment)
+	payments.Post("/:id/allocate", middleware.RequirePermission("finance.payment.post"), handlers.AllocatePayment)
+	payments.Post("/:id/void", middleware.RequirePermission("finance.payment.void"), handlers.VoidPayment)
+
+	creditBalances := api.Group("/credit-balances", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	creditBalances.Get("/", handlers.ListCreditBalances)
+	creditBalances.Post("/:id/apply", middleware.RequirePermission("finance.credit.apply"), handlers.ApplyCreditBalance)
+
+	adjustments := api.Group("/financial-adjustments", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	adjustments.Get("/", handlers.ListFinancialAdjustments)
+	adjustments.Get("/:id", handlers.GetFinancialAdjustment)
+	adjustments.Post("/", middleware.RequirePermission("finance.adjustment.create"), handlers.CreateFinancialAdjustment)
+	adjustments.Post("/:id/approve", middleware.RequirePermission("finance.adjustment.approve"), handlers.ApproveFinancialAdjustment)
+	adjustments.Post("/:id/reject", middleware.RequirePermission("finance.adjustment.approve"), handlers.RejectFinancialAdjustment)
+
+	// Statement routes
+	parties.Get("/:id/statement", handlers.GetPartyStatement)
+	units.Get("/:id/statement", handlers.GetUnitStatement)
+
+	// Approval Policy routes
+	approvalPolicies := api.Group("/approval-policies", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	approvalPolicies.Get("/", handlers.ListApprovalPolicies)
+	approvalPolicies.Get("/:id", handlers.GetApprovalPolicy)
+	approvalPolicies.Post("/", middleware.RequirePermission("approvals.policy.manage"), handlers.CreateApprovalPolicy)
+	approvalPolicies.Patch("/:id", middleware.RequirePermission("approvals.policy.manage"), handlers.UpdateApprovalPolicy)
+
+	// Approval Request routes
+	approvalRequests := api.Group("/approval-requests", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	approvalRequests.Get("/", handlers.ListApprovalRequests)
+	approvalRequests.Get("/:id", handlers.GetApprovalRequest)
+	approvalRequests.Post("/", handlers.CreateApprovalRequest)
+	approvalRequests.Post("/:id/decide", middleware.RequirePermission("approvals.request.decide"), handlers.DecideApprovalRequest)
+	approvalRequests.Post("/:id/cancel", handlers.CancelApprovalRequest)
+
+	// Audit Log routes
+	auditLogs := api.Group("/audit-logs", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	auditLogs.Get("/", middleware.RequirePermission("audit.log.view"), handlers.ListAuditLogs)
+	auditLogs.Get("/:entity_type/:entity_id", middleware.RequirePermission("audit.log.view"), handlers.GetAuditLogsForEntity)
 }
