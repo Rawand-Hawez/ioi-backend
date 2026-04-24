@@ -356,6 +356,70 @@ func TestReservationCancelReleasesUnitWhenNoActiveContract(t *testing.T) {
 	require.Equal(t, "available", unit["sales_status"])
 }
 
+func TestActivateSalesContractGeneratesScheduleFromTemplateWhenNoLinesExist(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Activation Template Buyer")
+	unit := getSalesTestUnit(t, unitID)
+	templateID := createSalesTestPaymentPlanTemplate(t, unit["business_entity_id"].(string), map[string]any{
+		"down_payment": map[string]any{"percentage": 20, "anchor": "contract_date"},
+		"tranches": []map[string]any{
+			{"percentage": 80, "anchor": "contract_date", "installment_count": 4, "frequency": "monthly"},
+		},
+	})
+	contractID := createSalesTestContractWithTemplate(t, unitID, buyerID, templateID, "100000.00", "0.00", "20000.00")
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	response := decodeSalesTestObject(t, rr.Body)
+	contract := response["contract"].(map[string]any)
+	require.Equal(t, "active", contract["status"])
+	require.Equal(t, "sold", getSalesTestUnit(t, unitID)["sales_status"])
+	require.Len(t, getSalesTestScheduleLineReceivables(t, contractID), 5)
+}
+
+func TestActivateSalesContractCreatesReceivablesForEveryScheduleLine(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Activation Receivable Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+	lineID1 := createSalesTestScheduleLine(t, contractID, "2026-05-01", "40000.00", "scheduled")
+	lineID2 := createSalesTestScheduleLine(t, contractID, "2026-06-01", "60000.00", "scheduled")
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	lines := getSalesTestScheduleLineReceivables(t, contractID)
+	require.Len(t, lines, 2)
+	expectedAmounts := map[string]string{
+		lineID1: "40000.00",
+		lineID2: "60000.00",
+	}
+	for _, line := range lines {
+		require.NotEmpty(t, line["receivable_id"])
+		receivable := getSalesTestReceivable(t, line["receivable_id"])
+		require.Equal(t, "sales", receivable["source_module"])
+		require.Equal(t, "installment_schedule_line", receivable["source_record_type"])
+		require.Equal(t, line["id"], receivable["source_record_id"])
+		require.Equal(t, expectedAmounts[line["id"]], normalizeSalesTestAmountString(t, receivable["original_amount"]))
+	}
+}
+
+func TestActivateSalesContractRejectsSecondActiveContractForUnit(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID1 := createSalesTestParty(t, "First Active Buyer")
+	buyerID2 := createSalesTestParty(t, "Second Active Buyer")
+	firstContractID := createSalesTestContract(t, unitID, buyerID1, "draft")
+	secondContractID := createSalesTestContract(t, unitID, buyerID2, "draft")
+	createSalesTestScheduleLine(t, firstContractID, "2026-05-01", "100000.00", "scheduled")
+	createSalesTestScheduleLine(t, secondContractID, "2026-05-01", "100000.00", "scheduled")
+
+	firstRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+firstContractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusOK, firstRR.Code, firstRR.Body.String())
+
+	secondRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+secondContractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusConflict, secondRR.Code, secondRR.Body.String())
+}
+
 func createRestrictedTestToken(t *testing.T) string {
 	t.Helper()
 
@@ -653,6 +717,72 @@ func decodeSalesTestObject(t *testing.T, body *bytes.Buffer) map[string]any {
 	return response
 }
 
+func getSalesTestScheduleLineReceivables(t *testing.T, contractID string) []map[string]string {
+	t.Helper()
+
+	contractUUID := uuid.MustParse(contractID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	var lines []map[string]string
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		rows, err := tx.Query(context.Background(), `
+			SELECT id::text, COALESCE(receivable_id::text, ''), principal_amount::text
+			FROM installment_schedule_lines
+			WHERE sales_contract_id = $1
+			ORDER BY line_no
+		`, contractUUID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id, receivableID, principalAmount string
+			if err := rows.Scan(&id, &receivableID, &principalAmount); err != nil {
+				return err
+			}
+			lines = append(lines, map[string]string{
+				"id":               id,
+				"receivable_id":    receivableID,
+				"principal_amount": principalAmount,
+			})
+		}
+		return rows.Err()
+	})
+	require.NoError(t, err)
+	return lines
+}
+
+func getSalesTestReceivable(t *testing.T, receivableID string) map[string]string {
+	t.Helper()
+
+	receivableUUID := uuid.MustParse(receivableID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	receivable := map[string]string{}
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		var sourceModule, sourceRecordType, sourceRecordID, originalAmount string
+		if err := tx.QueryRow(context.Background(), `
+			SELECT source_module, source_record_type, source_record_id::text, original_amount::text
+			FROM receivables
+			WHERE id = $1
+		`, receivableUUID).Scan(&sourceModule, &sourceRecordType, &sourceRecordID, &originalAmount); err != nil {
+			return err
+		}
+		receivable = map[string]string{
+			"source_module":      sourceModule,
+			"source_record_type": sourceRecordType,
+			"source_record_id":   sourceRecordID,
+			"original_amount":    originalAmount,
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return receivable
+}
+
 func parseSalesTestAmount(t *testing.T, value string) *big.Rat {
 	t.Helper()
 
@@ -667,6 +797,14 @@ func formatSalesTestAmount(t *testing.T, amount *big.Rat) string {
 	cents := new(big.Rat).Mul(amount, big.NewRat(100, 1))
 	require.Equal(t, int64(1), cents.Denom().Int64())
 	return formatSalesTestCents(cents.Num().Int64())
+}
+
+func normalizeSalesTestAmountString(t *testing.T, value string) string {
+	t.Helper()
+
+	amount, ok := new(big.Rat).SetString(value)
+	require.True(t, ok)
+	return formatSalesTestAmount(t, amount)
 }
 
 func normalizeSalesTestJSONAmount(t *testing.T, value any) string {

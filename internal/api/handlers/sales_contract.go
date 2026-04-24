@@ -304,6 +304,54 @@ func scheduleGenerationAnchors(req generateSalesContractScheduleRequest, contrac
 	return anchors, nil
 }
 
+func createScheduleLinesFromTemplate(ctx context.Context, q *db.Queries, contractID uuid.UUID, contract db.SalesContract, req generateSalesContractScheduleRequest) ([]db.InstallmentScheduleLine, error) {
+	if !contract.PaymentPlanTemplateID.Valid {
+		return nil, errors.New("payment_plan_template_id is required")
+	}
+
+	template, err := q.GetPaymentPlanTemplate(ctx, contract.PaymentPlanTemplateID)
+	if err != nil {
+		return nil, err
+	}
+	rule, err := parsePaymentPlanGenerationRule(json.RawMessage(template.GenerationRuleJson), template.InstallmentCount)
+	if err != nil {
+		return nil, err
+	}
+	anchors, err := scheduleGenerationAnchors(req, contract, rule)
+	if err != nil {
+		return nil, err
+	}
+	lineInputs, err := buildScheduleLinesFromTemplate(salesContractAmountView{NetContractAmount: contract.NetContractAmount}, rule, anchors)
+	if err != nil {
+		return nil, err
+	}
+
+	zeroAmount := "0.00"
+	scheduleLines := make([]db.InstallmentScheduleLine, 0, len(lineInputs))
+	for i, line := range lineInputs {
+		createParams := db.CreateInstallmentScheduleLineParams{
+			SalesContractID:       toPgUUID(contractID),
+			LineNo:                int16(i + 1),
+			DueDate:               pgtype.Date{Time: line.DueDate, Valid: true},
+			LineType:              line.LineType,
+			Description:           toPgText(&line.Description),
+			PrincipalAmount:       toPgNumeric(&line.PrincipalAmount),
+			PenaltyAmountAccrued:  toPgNumeric(&zeroAmount),
+			DiscountAmountApplied: toPgNumeric(&zeroAmount),
+			AmountPaid:            toPgNumeric(&zeroAmount),
+			Status:                "scheduled",
+		}
+
+		scheduleLine, err := q.CreateInstallmentScheduleLine(ctx, createParams)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create schedule line %d: %w", i+1, err)
+		}
+
+		scheduleLines = append(scheduleLines, scheduleLine)
+	}
+	return scheduleLines, nil
+}
+
 func isScheduleGenerationBadRequest(err error) bool {
 	msg := err.Error()
 	return msg == "payment_plan_template_id is required" ||
@@ -779,16 +827,43 @@ func ActivateSalesContract(c *fiber.Ctx) error {
 			return errors.New("can only activate draft contracts")
 		}
 
+		activeContract, err := q.GetActiveSalesContractForUnit(ctx, existing.UnitID)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if activeContract.ID.Valid && activeContract.ID.Bytes != id {
+			return errors.New("unit already has an active sales contract")
+		}
+
 		scheduleLines, err = q.ListInstallmentScheduleLines(ctx, toPgUUID(id))
 		if err != nil {
 			return err
 		}
 
 		if len(scheduleLines) == 0 {
-			return errors.New("cannot activate contract with no schedule lines")
+			scheduleLines, err = createScheduleLinesFromTemplate(ctx, q, id, existing, generateSalesContractScheduleRequest{})
+			if err != nil {
+				if err.Error() == "payment_plan_template_id is required" {
+					return errors.New("cannot activate contract with no schedule lines")
+				}
+				return err
+			}
 		}
 
 		for i, line := range scheduleLines {
+			if line.ReceivableID.Valid {
+				receivable, err := q.GetReceivable(ctx, line.ReceivableID)
+				if err != nil {
+					return err
+				}
+				if receivable.SourceModule != "sales" ||
+					receivable.SourceRecordType != "installment_schedule_line" ||
+					receivable.SourceRecordID.Bytes != line.ID.Bytes {
+					return errors.New("schedule line receivable does not match line")
+				}
+				continue
+			}
+
 			receivableNo := fmt.Sprintf("REC-%s-%d", existing.ContractNo, line.LineNo)
 			receivableParams := db.CreateReceivableParams{
 				BusinessEntityID: existing.BusinessEntityID,
@@ -867,8 +942,14 @@ func ActivateSalesContract(c *fiber.Ctx) error {
 		if err.Error() == "can only activate draft contracts" {
 			return c.Status(409).JSON(fiber.Map{"error": "can only activate draft contracts"})
 		}
+		if err.Error() == "unit already has an active sales contract" {
+			return c.Status(409).JSON(fiber.Map{"error": "unit already has an active sales contract"})
+		}
 		if err.Error() == "cannot activate contract with no schedule lines" {
 			return c.Status(400).JSON(fiber.Map{"error": "cannot activate contract with no schedule lines"})
+		}
+		if err.Error() == "schedule line receivable does not match line" {
+			return c.Status(409).JSON(fiber.Map{"error": "schedule line receivable does not match line"})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to activate sales contract"})
@@ -1430,44 +1511,9 @@ func GenerateSalesContractSchedule(c *fiber.Ctx) error {
 			return errors.New("schedule already exists for this contract")
 		}
 
-		template, err := q.GetPaymentPlanTemplate(ctx, contract.PaymentPlanTemplateID)
+		scheduleLines, err = createScheduleLinesFromTemplate(ctx, q, id, contract, req)
 		if err != nil {
 			return err
-		}
-		rule, err := parsePaymentPlanGenerationRule(json.RawMessage(template.GenerationRuleJson), template.InstallmentCount)
-		if err != nil {
-			return err
-		}
-		anchors, err := scheduleGenerationAnchors(req, contract, rule)
-		if err != nil {
-			return err
-		}
-		lineInputs, err := buildScheduleLinesFromTemplate(salesContractAmountView{NetContractAmount: contract.NetContractAmount}, rule, anchors)
-		if err != nil {
-			return err
-		}
-
-		zeroAmount := "0.00"
-		for i, line := range lineInputs {
-			createParams := db.CreateInstallmentScheduleLineParams{
-				SalesContractID:       toPgUUID(id),
-				LineNo:                int16(i + 1),
-				DueDate:               pgtype.Date{Time: line.DueDate, Valid: true},
-				LineType:              line.LineType,
-				Description:           toPgText(&line.Description),
-				PrincipalAmount:       toPgNumeric(&line.PrincipalAmount),
-				PenaltyAmountAccrued:  toPgNumeric(&zeroAmount),
-				DiscountAmountApplied: toPgNumeric(&zeroAmount),
-				AmountPaid:            toPgNumeric(&zeroAmount),
-				Status:                "scheduled",
-			}
-
-			scheduleLine, err := q.CreateInstallmentScheduleLine(ctx, createParams)
-			if err != nil {
-				return fmt.Errorf("failed to create schedule line %d: %w", i+1, err)
-			}
-
-			scheduleLines = append(scheduleLines, scheduleLine)
 		}
 
 		afterSnapshot, _ := json.Marshal(scheduleLines)
