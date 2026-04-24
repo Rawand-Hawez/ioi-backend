@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -361,6 +362,10 @@ func ConvertReservation(c *fiber.Ctx) error {
 	err = p.WithTx(ctx, claims, func(tx pgx.Tx) error {
 		q := db.New(tx)
 
+		if _, err := q.ExpireReservations(ctx); err != nil {
+			return err
+		}
+
 		reservation, err := q.GetReservation(ctx, toPgUUID(id))
 		if err != nil {
 			return err
@@ -368,6 +373,33 @@ func ConvertReservation(c *fiber.Ctx) error {
 
 		if reservation.Status != "active" {
 			return errors.New("reservation is not active")
+		}
+
+		salePriceAmount, err := numericContractAmount("quoted_price_amount", reservation.QuotedPriceAmount)
+		if err != nil {
+			return err
+		}
+		discountAmount := "0.00"
+		if reservation.DiscountAmount.Valid {
+			discountAmount = formatContractAmount(numericToRat(&reservation.DiscountAmount))
+		}
+
+		downPaymentAmount := "0.00"
+		if reservation.DepositAmount.Valid {
+			downPaymentAmount = formatContractAmount(numericToRat(&reservation.DepositAmount))
+		} else if reservation.DepositPaymentID.Valid {
+			payment, err := q.GetPayment(ctx, reservation.DepositPaymentID)
+			if err != nil {
+				return err
+			}
+			if payment.Status != "posted" {
+				return errReservationDepositPaymentNotPosted
+			}
+			downPaymentAmount = formatContractAmount(numericToRat(&payment.AmountReceived))
+		}
+		amounts, err := deriveContractAmounts(salePriceAmount, &discountAmount, nil, &downPaymentAmount, nil)
+		if err != nil {
+			return err
 		}
 
 		contractParams := db.CreateSalesContractParams{
@@ -379,8 +411,11 @@ func ConvertReservation(c *fiber.Ctx) error {
 			SourceReservationID: toPgUUID(id),
 			ContractDate:        pgtype.Date{Time: time.Now(), Valid: true},
 			EffectiveDate:       pgtype.Date{Time: time.Now(), Valid: true},
-			SalePriceAmount:     reservation.QuotedPriceAmount,
-			DiscountAmount:      reservation.DiscountAmount,
+			SalePriceAmount:     toPgNumeric(&salePriceAmount),
+			DiscountAmount:      toPgNumeric(&amounts.Discount),
+			NetContractAmount:   toPgNumeric(&amounts.Net),
+			DownPaymentAmount:   toPgNumeric(&amounts.Down),
+			FinancedAmount:      toPgNumeric(&amounts.Financed),
 			SalePriceCurrency:   reservation.DepositCurrency,
 			CreatedByUserID:     toPgUUID(userID),
 		}
@@ -437,6 +472,12 @@ func ConvertReservation(c *fiber.Ctx) error {
 		}
 		if err.Error() == "reservation is not active" {
 			return c.Status(409).JSON(fiber.Map{"error": "reservation is not active"})
+		}
+		if isReservationDepositValidationError(err) ||
+			strings.Contains(err.Error(), "amount") ||
+			strings.Contains(err.Error(), "quoted_price_amount") ||
+			strings.Contains(err.Error(), "deposit_amount") {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to convert reservation"})

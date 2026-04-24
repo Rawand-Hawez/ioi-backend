@@ -100,6 +100,88 @@ func TestSalesContractRejectsInconsistentAmounts(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
+func TestCreateSalesContractDerivesNetAndFinancedAmounts(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Derived Amount Buyer")
+	unit := getSalesTestUnit(t, unitID)
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts", map[string]any{
+		"business_entity_id":  unit["business_entity_id"],
+		"branch_id":           unit["branch_id"],
+		"project_id":          unit["project_id"],
+		"unit_id":             unitID,
+		"primary_buyer_id":    buyerID,
+		"contract_date":       "2026-04-24",
+		"effective_date":      "2026-04-24",
+		"sale_price_amount":   "125000.00",
+		"sale_price_currency": "USD",
+		"discount_amount":     "5000.00",
+		"down_payment_amount": "20000.00",
+	})
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+
+	contract := decodeSalesTestObject(t, rr.Body)
+	require.Equal(t, "120000.00", normalizeSalesTestJSONAmount(t, contract["net_contract_amount"]))
+	require.Equal(t, "20000.00", normalizeSalesTestJSONAmount(t, contract["down_payment_amount"]))
+	require.Equal(t, "100000.00", normalizeSalesTestJSONAmount(t, contract["financed_amount"]))
+}
+
+func TestCreateSalesContractRejectsProvidedInconsistentAmounts(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Provided Inconsistent Buyer")
+	unit := getSalesTestUnit(t, unitID)
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts", map[string]any{
+		"business_entity_id":  unit["business_entity_id"],
+		"branch_id":           unit["branch_id"],
+		"project_id":          unit["project_id"],
+		"unit_id":             unitID,
+		"primary_buyer_id":    buyerID,
+		"contract_date":       "2026-04-24",
+		"effective_date":      "2026-04-24",
+		"sale_price_amount":   "125000.00",
+		"sale_price_currency": "USD",
+		"discount_amount":     "5000.00",
+		"net_contract_amount": "125000.00",
+		"down_payment_amount": "20000.00",
+		"financed_amount":     "105000.00",
+	})
+	require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+}
+
+func TestConvertReservationCreatesDraftContractWithDerivedAmounts(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Reservation Conversion Buyer")
+	unit := getSalesTestUnit(t, unitID)
+
+	reservationRR := salesRequest(t, http.MethodPost, "/api/v1/reservations", map[string]any{
+		"business_entity_id":  unit["business_entity_id"],
+		"branch_id":           unit["branch_id"],
+		"project_id":          unit["project_id"],
+		"unit_id":             unitID,
+		"customer_id":         buyerID,
+		"expires_at":          time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339),
+		"deposit_amount":      "15000.00",
+		"deposit_currency":    "USD",
+		"quoted_price_amount": "150000.00",
+		"discount_amount":     "10000.00",
+	})
+	require.Equal(t, http.StatusCreated, reservationRR.Code, reservationRR.Body.String())
+
+	convertRR := salesRequest(t, http.MethodPost, "/api/v1/reservations/"+responseID(t, reservationRR.Body)+"/convert", map[string]any{})
+	require.Equal(t, http.StatusCreated, convertRR.Code, convertRR.Body.String())
+
+	response := decodeSalesTestObject(t, convertRR.Body)
+	contract, ok := response["contract"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "draft", contract["status"])
+	require.Equal(t, "150000.00", normalizeSalesTestJSONAmount(t, contract["sale_price_amount"]))
+	require.Equal(t, "10000.00", normalizeSalesTestJSONAmount(t, contract["discount_amount"]))
+	require.Equal(t, "140000.00", normalizeSalesTestJSONAmount(t, contract["net_contract_amount"]))
+	require.Equal(t, "15000.00", normalizeSalesTestJSONAmount(t, contract["down_payment_amount"]))
+	require.Equal(t, "125000.00", normalizeSalesTestJSONAmount(t, contract["financed_amount"]))
+}
+
 func TestPaymentPlanTemplateValidatesGenerationRule(t *testing.T) {
 	businessEntityID := createSalesTestBusinessEntity(t)
 
@@ -559,6 +641,16 @@ func decodeScheduleLines(t *testing.T, body *bytes.Buffer) []decodedScheduleLine
 		})
 	}
 	return lines
+}
+
+func decodeSalesTestObject(t *testing.T, body *bytes.Buffer) map[string]any {
+	t.Helper()
+
+	var response map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(body.Bytes()))
+	decoder.UseNumber()
+	require.NoError(t, decoder.Decode(&response))
+	return response
 }
 
 func parseSalesTestAmount(t *testing.T, value string) *big.Rat {

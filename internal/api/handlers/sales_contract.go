@@ -43,39 +43,56 @@ func isValidContractTransition(from, to string) bool {
 	return false
 }
 
-func validateContractAmounts(salePrice string, discount, net, down, financed *string) error {
+type derivedContractAmounts struct {
+	Discount string
+	Net      string
+	Down     string
+	Financed string
+}
+
+func deriveContractAmounts(salePrice string, discount, net, down, financed *string) (derivedContractAmounts, error) {
 	salePriceAmount, err := parseRequiredAmount("sale_price_amount", &salePrice)
 	if err != nil {
-		return err
+		return derivedContractAmounts{}, err
 	}
-	discountAmount, err := parseRequiredAmount("discount_amount", discount)
+	discountAmount, err := parseOptionalAmount("discount_amount", discount, big.NewRat(0, 1))
 	if err != nil {
-		return err
+		return derivedContractAmounts{}, err
 	}
-	netAmount, err := parseRequiredAmount("net_contract_amount", net)
+	downAmount, err := parseOptionalAmount("down_payment_amount", down, big.NewRat(0, 1))
 	if err != nil {
-		return err
+		return derivedContractAmounts{}, err
 	}
-	downAmount, err := parseRequiredAmount("down_payment_amount", down)
+
+	expectedNetAmount := new(big.Rat).Sub(salePriceAmount, discountAmount)
+	netAmount, err := parseOptionalAmount("net_contract_amount", net, expectedNetAmount)
 	if err != nil {
-		return err
+		return derivedContractAmounts{}, err
 	}
-	financedAmount, err := parseRequiredAmount("financed_amount", financed)
+	if net != nil && *net != "" && netAmount.Cmp(expectedNetAmount) != 0 {
+		return derivedContractAmounts{}, fmt.Errorf("net_contract_amount must equal sale_price_amount minus discount_amount")
+	}
+
+	expectedFinancedAmount := new(big.Rat).Sub(netAmount, downAmount)
+	financedAmount, err := parseOptionalAmount("financed_amount", financed, expectedFinancedAmount)
 	if err != nil {
-		return err
+		return derivedContractAmounts{}, err
+	}
+	if financed != nil && *financed != "" && financedAmount.Cmp(expectedFinancedAmount) != 0 {
+		return derivedContractAmounts{}, fmt.Errorf("financed_amount must equal net_contract_amount minus down_payment_amount")
 	}
 
 	zero := big.NewRat(0, 1)
 	if salePriceAmount.Cmp(zero) < 0 || discountAmount.Cmp(zero) < 0 || netAmount.Cmp(zero) < 0 || downAmount.Cmp(zero) < 0 || financedAmount.Cmp(zero) < 0 {
-		return fmt.Errorf("amounts must be non-negative")
+		return derivedContractAmounts{}, fmt.Errorf("amounts must be non-negative")
 	}
-	if netAmount.Cmp(new(big.Rat).Sub(salePriceAmount, discountAmount)) != 0 {
-		return fmt.Errorf("net_contract_amount must equal sale_price_amount minus discount_amount")
-	}
-	if financedAmount.Cmp(new(big.Rat).Sub(netAmount, downAmount)) != 0 {
-		return fmt.Errorf("financed_amount must equal net_contract_amount minus down_payment_amount")
-	}
-	return nil
+
+	return derivedContractAmounts{
+		Discount: formatContractAmount(discountAmount),
+		Net:      formatContractAmount(netAmount),
+		Down:     formatContractAmount(downAmount),
+		Financed: formatContractAmount(financedAmount),
+	}, nil
 }
 
 func parseRequiredAmount(field string, value *string) (*big.Rat, error) {
@@ -87,6 +104,24 @@ func parseRequiredAmount(field string, value *string) (*big.Rat, error) {
 		return nil, fmt.Errorf("invalid %s", field)
 	}
 	return amount, nil
+}
+
+func parseOptionalAmount(field string, value *string, defaultAmount *big.Rat) (*big.Rat, error) {
+	if value == nil || *value == "" {
+		return new(big.Rat).Set(defaultAmount), nil
+	}
+	return parseRequiredAmount(field, value)
+}
+
+func formatContractAmount(amount *big.Rat) string {
+	return amount.FloatString(2)
+}
+
+func numericContractAmount(field string, amount pgtype.Numeric) (string, error) {
+	if !amount.Valid {
+		return "", fmt.Errorf("%s is required", field)
+	}
+	return formatContractAmount(numericToRat(&amount)), nil
 }
 
 type generateSalesContractScheduleRequest struct {
@@ -490,7 +525,8 @@ func CreateSalesContract(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid effective_date format, use YYYY-MM-DD"})
 	}
 
-	if err := validateContractAmounts(req.SalePriceAmount, req.DiscountAmount, req.NetContractAmount, req.DownPaymentAmount, req.FinancedAmount); err != nil {
+	amounts, err := deriveContractAmounts(req.SalePriceAmount, req.DiscountAmount, req.NetContractAmount, req.DownPaymentAmount, req.FinancedAmount)
+	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 	}
 
@@ -530,10 +566,10 @@ func CreateSalesContract(c *fiber.Ctx) error {
 			EffectiveDate:         pgtype.Date{Time: effectiveDate, Valid: true},
 			SalePriceAmount:       toPgNumeric(&req.SalePriceAmount),
 			SalePriceCurrency:     req.SalePriceCurrency,
-			DiscountAmount:        toPgNumeric(req.DiscountAmount),
-			NetContractAmount:     toPgNumeric(req.NetContractAmount),
-			DownPaymentAmount:     toPgNumeric(req.DownPaymentAmount),
-			FinancedAmount:        toPgNumeric(req.FinancedAmount),
+			DiscountAmount:        toPgNumeric(&amounts.Discount),
+			NetContractAmount:     toPgNumeric(&amounts.Net),
+			DownPaymentAmount:     toPgNumeric(&amounts.Down),
+			FinancedAmount:        toPgNumeric(&amounts.Financed),
 			PaymentPlanTemplateID: toPgUUIDFromString(req.PaymentPlanTemplateID),
 			HandoverDatePlanned:   toPgDate(req.HandoverDatePlanned),
 			Notes:                 toPgText(req.Notes),
