@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -171,6 +172,52 @@ func TestPaymentPlanTemplateAcceptsValidGenerationRule(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
 }
 
+func TestGenerateSalesContractScheduleUsesPaymentPlanTemplate(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Template Schedule Buyer")
+	businessEntityID := createSalesTestBusinessEntity(t)
+	templateID := createSalesTestPaymentPlanTemplate(t, businessEntityID, map[string]any{
+		"down_payment": map[string]any{"percentage": 10, "anchor": "contract_date", "offset_days": 0},
+		"tranches": []map[string]any{
+			{"percentage": 90, "anchor": "contract_date", "offset_days": 30, "installment_count": 3, "frequency": "monthly", "line_type": "installment"},
+		},
+	})
+	contractID := createSalesTestContractWithTemplate(t, unitID, buyerID, templateID, "100000.00", "0.00", "10000.00")
+
+	rr := salesRequest(t, "POST", "/api/v1/sales-contracts/"+contractID+"/schedule/generate", map[string]any{
+		"contract_date": "2026-05-01",
+	})
+
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+	lines := decodeScheduleLines(t, rr.Body)
+	require.Len(t, lines, 4)
+	require.Equal(t, "down_payment", lines[0].LineType)
+	require.Equal(t, "10000.00", lines[0].PrincipalAmount)
+	require.Equal(t, "installment", lines[1].LineType)
+	require.Equal(t, "30000.00", lines[1].PrincipalAmount)
+	require.Equal(t, "2026-05-31", lines[1].DueDate)
+}
+
+func TestGenerateSalesContractScheduleRequiresHandoverDateWhenAnchored(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Handover Schedule Buyer")
+	businessEntityID := createSalesTestBusinessEntity(t)
+	templateID := createSalesTestPaymentPlanTemplate(t, businessEntityID, map[string]any{
+		"down_payment": map[string]any{"percentage": 10, "anchor": "contract_date", "offset_days": 0},
+		"tranches": []map[string]any{
+			{"percentage": 90, "anchor": "handover_date", "offset_days": 0, "installment_count": 3, "frequency": "monthly", "line_type": "installment"},
+		},
+	})
+	contractID := createSalesTestContractWithTemplate(t, unitID, buyerID, templateID, "100000.00", "0.00", "10000.00")
+
+	rr := salesRequest(t, "POST", "/api/v1/sales-contracts/"+contractID+"/schedule/generate", map[string]any{
+		"contract_date": "2026-05-01",
+	})
+
+	require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), "handover_date")
+}
+
 func createRestrictedTestToken(t *testing.T) string {
 	t.Helper()
 
@@ -221,7 +268,7 @@ func createSalesTestPaymentPlanTemplate(t *testing.T, businessEntityID string, r
 		"name":                 "Sales Test Payment Plan",
 		"status":               "active",
 		"frequency_type":       "monthly",
-		"installment_count":    12,
+		"installment_count":    salesTestRuleInstallmentCount(t, rule),
 		"generation_rule_json": rule,
 	}
 
@@ -285,6 +332,39 @@ func createSalesTestContract(t *testing.T, unitID string, primaryBuyerID string,
 		setSalesTestStatus(t, "sales_contracts", id, status)
 	}
 	return id
+}
+
+func createSalesTestContractWithTemplate(t *testing.T, unitID string, primaryBuyerID string, templateID string, salePrice string, discount string, downPayment string) string {
+	t.Helper()
+
+	saleRat := parseSalesTestAmount(t, salePrice)
+	discountRat := parseSalesTestAmount(t, discount)
+	downRat := parseSalesTestAmount(t, downPayment)
+	netRat := new(big.Rat).Sub(saleRat, discountRat)
+	financedRat := new(big.Rat).Sub(netRat, downRat)
+
+	unit := getSalesTestUnit(t, unitID)
+	body := map[string]any{
+		"business_entity_id":       unit["business_entity_id"],
+		"branch_id":                unit["branch_id"],
+		"project_id":               unit["project_id"],
+		"unit_id":                  unitID,
+		"primary_buyer_id":         primaryBuyerID,
+		"contract_date":            "2026-04-24",
+		"effective_date":           "2026-04-24",
+		"sale_price_amount":        salePrice,
+		"sale_price_currency":      "USD",
+		"discount_amount":          discount,
+		"net_contract_amount":      formatSalesTestAmount(t, netRat),
+		"down_payment_amount":      downPayment,
+		"financed_amount":          formatSalesTestAmount(t, financedRat),
+		"payment_plan_template_id": templateID,
+	}
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts", body)
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+
+	return responseID(t, rr.Body)
 }
 
 func createSalesTestScheduleLine(t *testing.T, contractID string, dueDate string, amount string, status string) string {
@@ -380,6 +460,128 @@ func responseID(t *testing.T, body *bytes.Buffer) string {
 	require.NotEmpty(t, id)
 
 	return id
+}
+
+type decodedScheduleLine struct {
+	LineType        string
+	PrincipalAmount string
+	DueDate         string
+}
+
+func decodeScheduleLines(t *testing.T, body *bytes.Buffer) []decodedScheduleLine {
+	t.Helper()
+
+	var response struct {
+		Data []map[string]any `json:"data"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body.Bytes()))
+	decoder.UseNumber()
+	require.NoError(t, decoder.Decode(&response))
+
+	lines := make([]decodedScheduleLine, 0, len(response.Data))
+	for _, raw := range response.Data {
+		lines = append(lines, decodedScheduleLine{
+			LineType:        raw["line_type"].(string),
+			PrincipalAmount: normalizeSalesTestJSONAmount(t, raw["principal_amount"]),
+			DueDate:         normalizeSalesTestJSONDate(t, raw["due_date"]),
+		})
+	}
+	return lines
+}
+
+func parseSalesTestAmount(t *testing.T, value string) *big.Rat {
+	t.Helper()
+
+	amount, ok := new(big.Rat).SetString(value)
+	require.True(t, ok, "invalid amount %q", value)
+	return amount
+}
+
+func formatSalesTestAmount(t *testing.T, amount *big.Rat) string {
+	t.Helper()
+
+	cents := new(big.Rat).Mul(amount, big.NewRat(100, 1))
+	require.Equal(t, int64(1), cents.Denom().Int64())
+	return formatSalesTestCents(cents.Num().Int64())
+}
+
+func normalizeSalesTestJSONAmount(t *testing.T, value any) string {
+	t.Helper()
+
+	switch amount := value.(type) {
+	case string:
+		return amount
+	case json.Number:
+		rat, ok := new(big.Rat).SetString(amount.String())
+		require.True(t, ok)
+		return formatSalesTestAmount(t, rat)
+	case float64:
+		return fmt.Sprintf("%.2f", amount)
+	default:
+		t.Fatalf("unexpected amount value %T: %v", value, value)
+		return ""
+	}
+}
+
+func normalizeSalesTestJSONDate(t *testing.T, value any) string {
+	t.Helper()
+
+	date, ok := value.(string)
+	require.True(t, ok, "unexpected date value %T: %v", value, value)
+	if len(date) >= len("2006-01-02") {
+		return date[:len("2006-01-02")]
+	}
+	return date
+}
+
+func formatSalesTestCents(cents int64) string {
+	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
+}
+
+func salesTestRuleInstallmentCount(t *testing.T, rule map[string]any) int32 {
+	t.Helper()
+
+	var total int32
+	rawTranches, ok := rule["tranches"]
+	require.True(t, ok)
+
+	switch tranches := rawTranches.(type) {
+	case []map[string]any:
+		for _, tranche := range tranches {
+			total += salesTestAnyToInt32(t, tranche["installment_count"])
+		}
+	case []any:
+		for _, raw := range tranches {
+			tranche, ok := raw.(map[string]any)
+			require.True(t, ok)
+			total += salesTestAnyToInt32(t, tranche["installment_count"])
+		}
+	default:
+		t.Fatalf("unexpected tranches type %T", rawTranches)
+	}
+	return total
+}
+
+func salesTestAnyToInt32(t *testing.T, value any) int32 {
+	t.Helper()
+
+	switch v := value.(type) {
+	case int:
+		return int32(v)
+	case int32:
+		return v
+	case int64:
+		return int32(v)
+	case float64:
+		return int32(v)
+	case json.Number:
+		i, err := v.Int64()
+		require.NoError(t, err)
+		return int32(i)
+	default:
+		t.Fatalf("unexpected int value %T: %v", value, value)
+		return 0
+	}
 }
 
 func setSalesTestStatus(t *testing.T, table string, id string, status string) {

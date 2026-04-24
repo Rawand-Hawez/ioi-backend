@@ -62,44 +62,47 @@ func (p *paymentPlanPercentage) UnmarshalJSON(data []byte) error {
 }
 
 func validatePaymentPlanGenerationRule(raw json.RawMessage, installmentCount int32) error {
+	_, err := parsePaymentPlanGenerationRule(raw, installmentCount)
+	return err
+}
+
+func parsePaymentPlanGenerationRule(raw json.RawMessage, installmentCount int32) (paymentPlanGenerationRule, error) {
+	var rule paymentPlanGenerationRule
 	if len(raw) == 0 {
-		return errors.New("generation_rule_json is required")
+		return rule, errors.New("generation_rule_json is required")
 	}
 	if installmentCount <= 0 {
-		return errors.New("installment_count must be positive")
+		return rule, errors.New("installment_count must be positive")
 	}
-
-	var rule paymentPlanGenerationRule
 	if err := json.Unmarshal(raw, &rule); err != nil {
-		return fmt.Errorf("invalid generation_rule_json")
+		return rule, fmt.Errorf("invalid generation_rule_json")
 	}
-
 	totalPercentage := new(big.Rat)
 	if err := validatePaymentPlanRuleSegment("down_payment", rule.DownPayment, false); err != nil {
-		return err
+		return rule, err
 	}
 	totalPercentage.Add(totalPercentage, rule.DownPayment.Percentage.value)
 
 	if len(rule.Tranches) == 0 {
-		return errors.New("at least one tranche is required")
+		return rule, errors.New("at least one tranche is required")
 	}
 
 	var totalInstallments int32
 	for i, tranche := range rule.Tranches {
 		if err := validatePaymentPlanRuleSegment(fmt.Sprintf("tranches[%d]", i), tranche, true); err != nil {
-			return err
+			return rule, err
 		}
 		totalPercentage.Add(totalPercentage, tranche.Percentage.value)
 		totalInstallments += tranche.InstallmentCount
 	}
 
 	if totalPercentage.Cmp(big.NewRat(100, 1)) != 0 {
-		return errors.New("generation_rule_json percentages must total 100")
+		return rule, errors.New("generation_rule_json percentages must total 100")
 	}
 	if totalInstallments != installmentCount {
-		return errors.New("tranche installment_count total must equal template installment_count")
+		return rule, errors.New("tranche installment_count total must equal template installment_count")
 	}
-	return nil
+	return rule, nil
 }
 
 func validatePaymentPlanRuleSegment(name string, segment paymentPlanRuleSegment, tranche bool) error {

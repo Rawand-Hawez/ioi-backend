@@ -8,6 +8,7 @@ import (
 	"log"
 	"math/big"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -86,6 +87,199 @@ func parseRequiredAmount(field string, value *string) (*big.Rat, error) {
 		return nil, fmt.Errorf("invalid %s", field)
 	}
 	return amount, nil
+}
+
+type generateSalesContractScheduleRequest struct {
+	ContractDate string `json:"contract_date"`
+	HandoverDate string `json:"handover_date"`
+}
+
+type salesContractAmountView struct {
+	NetContractAmount pgtype.Numeric
+}
+
+type scheduleAnchors struct {
+	ContractDate      time.Time
+	HandoverDate      time.Time
+	HandoverDateValid bool
+}
+
+type scheduleLineInput struct {
+	DueDate         time.Time
+	LineType        string
+	Description     string
+	PrincipalAmount string
+}
+
+type scheduleLineDraft struct {
+	dueDate     time.Time
+	lineType    string
+	description string
+	amount      *big.Rat
+}
+
+func buildScheduleLinesFromTemplate(contract salesContractAmountView, rule paymentPlanGenerationRule, anchors scheduleAnchors) ([]scheduleLineInput, error) {
+	netAmount := numericToRat(&contract.NetContractAmount)
+	if netAmount == nil || netAmount.Cmp(big.NewRat(0, 1)) <= 0 {
+		return nil, errors.New("net_contract_amount must be positive")
+	}
+
+	drafts := []scheduleLineDraft{
+		{
+			dueDate:     scheduleDueDate(rule.DownPayment, anchors, 0),
+			lineType:    "down_payment",
+			description: "Down payment",
+			amount:      percentageAmount(netAmount, rule.DownPayment.Percentage.value, 1),
+		},
+	}
+
+	for _, tranche := range rule.Tranches {
+		lineType := tranche.LineType
+		if lineType == "" {
+			lineType = "installment"
+		}
+		for i := int32(0); i < tranche.InstallmentCount; i++ {
+			drafts = append(drafts, scheduleLineDraft{
+				dueDate:     scheduleDueDate(tranche, anchors, i),
+				lineType:    lineType,
+				description: fmt.Sprintf("Installment %d", i+1),
+				amount:      percentageAmount(netAmount, tranche.Percentage.value, tranche.InstallmentCount),
+			})
+		}
+	}
+
+	totalCents := roundRatToCents(netAmount)
+	var allocatedCents int64
+	lines := make([]scheduleLineInput, 0, len(drafts))
+	for i, draft := range drafts {
+		cents := totalCents - allocatedCents
+		if i < len(drafts)-1 {
+			cents = roundRatToCents(draft.amount)
+			allocatedCents += cents
+		}
+		lines = append(lines, scheduleLineInput{
+			DueDate:         draft.dueDate,
+			LineType:        draft.lineType,
+			Description:     draft.description,
+			PrincipalAmount: formatCents(cents),
+		})
+	}
+	return lines, nil
+}
+
+func percentageAmount(base *big.Rat, percentage *big.Rat, count int32) *big.Rat {
+	amount := new(big.Rat).Mul(base, percentage)
+	amount.Quo(amount, big.NewRat(100, 1))
+	if count > 1 {
+		amount.Quo(amount, big.NewRat(int64(count), 1))
+	}
+	return amount
+}
+
+func scheduleDueDate(segment paymentPlanRuleSegment, anchors scheduleAnchors, installmentIndex int32) time.Time {
+	dueDate := anchorDate(segment.Anchor, anchors).AddDate(0, 0, int(segment.OffsetDays))
+	switch segment.Frequency {
+	case "monthly":
+		return addMonthsClamped(dueDate, int(installmentIndex))
+	case "quarterly":
+		return addMonthsClamped(dueDate, int(installmentIndex)*3)
+	case "semiannual":
+		return addMonthsClamped(dueDate, int(installmentIndex)*6)
+	case "annual":
+		return addMonthsClamped(dueDate, int(installmentIndex)*12)
+	default:
+		return dueDate
+	}
+}
+
+func anchorDate(anchor string, anchors scheduleAnchors) time.Time {
+	switch anchor {
+	case "handover_date":
+		return anchors.HandoverDate
+	default:
+		return anchors.ContractDate
+	}
+}
+
+func addMonthsClamped(date time.Time, months int) time.Time {
+	if months == 0 {
+		return date
+	}
+	targetFirst := time.Date(date.Year(), date.Month()+time.Month(months), 1, 0, 0, 0, 0, date.Location())
+	targetLastDay := targetFirst.AddDate(0, 1, -1).Day()
+	day := date.Day()
+	if day > targetLastDay {
+		day = targetLastDay
+	}
+	return time.Date(targetFirst.Year(), targetFirst.Month(), day, 0, 0, 0, 0, date.Location())
+}
+
+func roundRatToCents(amount *big.Rat) int64 {
+	scaled := new(big.Rat).Mul(amount, big.NewRat(100, 1))
+	quotient := new(big.Int)
+	remainder := new(big.Int)
+	quotient.QuoRem(scaled.Num(), scaled.Denom(), remainder)
+	if new(big.Int).Mul(remainder, big.NewInt(2)).Cmp(scaled.Denom()) >= 0 {
+		quotient.Add(quotient, big.NewInt(1))
+	}
+	return quotient.Int64()
+}
+
+func formatCents(cents int64) string {
+	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
+}
+
+func usesHandoverDate(rule paymentPlanGenerationRule) bool {
+	if rule.DownPayment.Anchor == "handover_date" {
+		return true
+	}
+	for _, tranche := range rule.Tranches {
+		if tranche.Anchor == "handover_date" {
+			return true
+		}
+	}
+	return false
+}
+
+func scheduleGenerationAnchors(req generateSalesContractScheduleRequest, contract db.SalesContract, rule paymentPlanGenerationRule) (scheduleAnchors, error) {
+	contractDate := contract.ContractDate.Time
+	if req.ContractDate != "" {
+		parsed, err := time.Parse("2006-01-02", req.ContractDate)
+		if err != nil {
+			return scheduleAnchors{}, errors.New("invalid contract_date format, use YYYY-MM-DD")
+		}
+		contractDate = parsed
+	}
+	if contractDate.IsZero() {
+		return scheduleAnchors{}, errors.New("contract_date is required")
+	}
+
+	anchors := scheduleAnchors{ContractDate: contractDate}
+	if req.HandoverDate != "" {
+		handoverDate, err := time.Parse("2006-01-02", req.HandoverDate)
+		if err != nil {
+			return scheduleAnchors{}, errors.New("invalid handover_date format, use YYYY-MM-DD")
+		}
+		anchors.HandoverDate = handoverDate
+		anchors.HandoverDateValid = true
+	}
+	if usesHandoverDate(rule) && !anchors.HandoverDateValid {
+		return scheduleAnchors{}, errors.New("handover_date is required for handover_date anchored schedule rules")
+	}
+	return anchors, nil
+}
+
+func isScheduleGenerationBadRequest(err error) bool {
+	msg := err.Error()
+	return msg == "payment_plan_template_id is required" ||
+		msg == "net_contract_amount must be positive" ||
+		strings.Contains(msg, "generation_rule_json") ||
+		strings.Contains(msg, "installment_count") ||
+		strings.Contains(msg, "anchor") ||
+		strings.Contains(msg, "frequency") ||
+		strings.Contains(msg, "percentage") ||
+		strings.Contains(msg, "contract_date") ||
+		strings.Contains(msg, "handover_date")
 }
 
 func ListSalesContracts(c *fiber.Ctx) error {
@@ -1153,21 +1347,9 @@ func GenerateSalesContractSchedule(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid sales contract id"})
 	}
 
-	var req struct {
-		Lines []struct {
-			DueDate         string  `json:"due_date"`
-			LineType        string  `json:"line_type"`
-			Description     *string `json:"description,omitempty"`
-			PrincipalAmount string  `json:"principal_amount"`
-		} `json:"lines"`
-	}
-
+	var req generateSalesContractScheduleRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid request body"})
-	}
-
-	if len(req.Lines) == 0 {
-		return c.Status(400).JSON(fiber.Map{"error": "at least one schedule line is required"})
 	}
 
 	userIDStr, ok := claims["sub"].(string)
@@ -1195,34 +1377,53 @@ func GenerateSalesContractSchedule(c *fiber.Ctx) error {
 		if contract.Status != "draft" {
 			return errors.New("can only generate schedule for draft contracts")
 		}
+		if !contract.PaymentPlanTemplateID.Valid {
+			return errors.New("payment_plan_template_id is required")
+		}
 
 		existingLines, err := q.ListInstallmentScheduleLines(ctx, toPgUUID(id))
 		if err != nil {
 			return err
 		}
 		if len(existingLines) > 0 {
+			for _, line := range existingLines {
+				if line.ReceivableID.Valid {
+					return errors.New("schedule has receivables and cannot be regenerated")
+				}
+			}
 			return errors.New("schedule already exists for this contract")
 		}
 
-		for i, line := range req.Lines {
-			dueDate, err := time.Parse("2006-01-02", line.DueDate)
-			if err != nil {
-				return fmt.Errorf("invalid due_date for line %d: use YYYY-MM-DD", i+1)
-			}
+		template, err := q.GetPaymentPlanTemplate(ctx, contract.PaymentPlanTemplateID)
+		if err != nil {
+			return err
+		}
+		rule, err := parsePaymentPlanGenerationRule(json.RawMessage(template.GenerationRuleJson), template.InstallmentCount)
+		if err != nil {
+			return err
+		}
+		anchors, err := scheduleGenerationAnchors(req, contract, rule)
+		if err != nil {
+			return err
+		}
+		lineInputs, err := buildScheduleLinesFromTemplate(salesContractAmountView{NetContractAmount: contract.NetContractAmount}, rule, anchors)
+		if err != nil {
+			return err
+		}
 
-			nextLineNo, err := q.GetNextScheduleLineNumber(ctx, toPgUUID(id))
-			if err != nil {
-				return err
-			}
-
+		zeroAmount := "0.00"
+		for i, line := range lineInputs {
 			createParams := db.CreateInstallmentScheduleLineParams{
-				SalesContractID: toPgUUID(id),
-				LineNo:          int16(nextLineNo),
-				DueDate:         pgtype.Date{Time: dueDate, Valid: true},
-				LineType:        line.LineType,
-				Description:     toPgText(line.Description),
-				PrincipalAmount: toPgNumeric(&line.PrincipalAmount),
-				Status:          "pending",
+				SalesContractID:       toPgUUID(id),
+				LineNo:                int16(i + 1),
+				DueDate:               pgtype.Date{Time: line.DueDate, Valid: true},
+				LineType:              line.LineType,
+				Description:           toPgText(&line.Description),
+				PrincipalAmount:       toPgNumeric(&line.PrincipalAmount),
+				PenaltyAmountAccrued:  toPgNumeric(&zeroAmount),
+				DiscountAmountApplied: toPgNumeric(&zeroAmount),
+				AmountPaid:            toPgNumeric(&zeroAmount),
+				Status:                "scheduled",
 			}
 
 			scheduleLine, err := q.CreateInstallmentScheduleLine(ctx, createParams)
@@ -1260,6 +1461,12 @@ func GenerateSalesContractSchedule(c *fiber.Ctx) error {
 		}
 		if err.Error() == "schedule already exists for this contract" {
 			return c.Status(409).JSON(fiber.Map{"error": "schedule already exists for this contract"})
+		}
+		if err.Error() == "schedule has receivables and cannot be regenerated" {
+			return c.Status(409).JSON(fiber.Map{"error": "schedule has receivables and cannot be regenerated"})
+		}
+		if isScheduleGenerationBadRequest(err) {
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to generate schedule"})
