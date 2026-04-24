@@ -218,6 +218,62 @@ func TestGenerateSalesContractScheduleRequiresHandoverDateWhenAnchored(t *testin
 	require.Contains(t, rr.Body.String(), "handover_date")
 }
 
+func TestCreateReservationExpiresStaleReservationsBeforeConflictCheck(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	customerID := createSalesTestParty(t, "Expired Reservation Buyer")
+	staleReservationID := createSalesTestReservation(t, unitID, customerID, "active")
+	expireSalesTestReservation(t, staleReservationID)
+
+	unit := getSalesTestUnit(t, unitID)
+	rr := salesRequest(t, http.MethodPost, "/api/v1/reservations", map[string]any{
+		"business_entity_id": unit["business_entity_id"],
+		"branch_id":          unit["branch_id"],
+		"project_id":         unit["project_id"],
+		"unit_id":            unitID,
+		"customer_id":        customerID,
+		"expires_at":         time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339),
+		"deposit_amount":     "0.00",
+		"deposit_currency":   "USD",
+		"discount_amount":    "0.00",
+	})
+
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+}
+
+func TestCreateReservationRejectsInvalidDepositPayment(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	customerID := createSalesTestParty(t, "Invalid Deposit Buyer")
+	unit := getSalesTestUnit(t, unitID)
+	paymentID := createSalesTestPayment(t, unit["business_entity_id"].(string), unit["branch_id"].(string), customerID, "500.00")
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/reservations", map[string]any{
+		"business_entity_id": unit["business_entity_id"],
+		"branch_id":          unit["branch_id"],
+		"project_id":         unit["project_id"],
+		"unit_id":            unitID,
+		"customer_id":        customerID,
+		"expires_at":         time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339),
+		"deposit_amount":     "500.00",
+		"deposit_currency":   "USD",
+		"deposit_payment_id": paymentID,
+		"discount_amount":    "0.00",
+	})
+
+	require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+}
+
+func TestReservationCancelReleasesUnitWhenNoActiveContract(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	customerID := createSalesTestParty(t, "Cancel Reservation Buyer")
+	reservationID := createSalesTestReservation(t, unitID, customerID, "active")
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/reservations/"+reservationID+"/cancel", map[string]any{"reason": "test"})
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	unit := getSalesTestUnit(t, unitID)
+	require.Equal(t, "available", unit["sales_status"])
+}
+
 func createRestrictedTestToken(t *testing.T) string {
 	t.Helper()
 
@@ -397,6 +453,22 @@ func createSalesTestScheduleLine(t *testing.T, contractID string, dueDate string
 	require.NoError(t, err)
 
 	return lineID.String()
+}
+
+func createSalesTestPayment(t *testing.T, businessEntityID string, branchID string, partyID string, amount string) string {
+	t.Helper()
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/payments", map[string]any{
+		"business_entity_id": businessEntityID,
+		"branch_id":          branchID,
+		"party_id":           partyID,
+		"payment_date":       "2026-04-24",
+		"payment_method":     "cash",
+		"amount_received":    amount,
+	})
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+
+	return responseID(t, rr.Body)
 }
 
 func salesRequest(t *testing.T, method string, path string, body any) *httptest.ResponseRecorder {
@@ -593,6 +665,26 @@ func setSalesTestStatus(t *testing.T, table string, id string, status string) {
 
 	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
 		_, err := tx.Exec(context.Background(), fmt.Sprintf("UPDATE %s SET status = $1, updated_at = timezone('utc', now()) WHERE id = $2", table), status, recordID)
+		return err
+	})
+	require.NoError(t, err)
+}
+
+func expireSalesTestReservation(t *testing.T, reservationID string) {
+	t.Helper()
+
+	recordID := uuid.MustParse(reservationID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(), `
+			UPDATE reservations
+			SET reserved_at = timezone('utc', now()) - interval '2 hours',
+				expires_at = timezone('utc', now()) - interval '1 hour',
+				updated_at = timezone('utc', now())
+			WHERE id = $1
+		`, recordID)
 		return err
 	})
 	require.NoError(t, err)
