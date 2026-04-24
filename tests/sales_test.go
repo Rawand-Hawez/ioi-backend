@@ -59,6 +59,21 @@ func TestSalesWriteRoutesRequirePermissions(t *testing.T) {
 	}
 }
 
+func TestSalesScheduleRoutesMatchPhase7Plan(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Schedule Route Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+
+	getRR := salesRequest(t, "GET", "/api/v1/sales-contracts/"+contractID+"/schedule", nil)
+	require.Equal(t, http.StatusOK, getRR.Code)
+
+	generateRR := salesRequest(t, "POST", "/api/v1/sales-contracts/"+contractID+"/schedule/generate", map[string]any{})
+	require.NotEqual(t, http.StatusNotFound, generateRR.Code)
+
+	oldMutationRR := salesRequest(t, "PATCH", "/api/v1/sales-contracts/"+contractID+"/schedule-lines/not-a-real-id", map[string]any{})
+	require.Equal(t, http.StatusNotFound, oldMutationRR.Code)
+}
+
 func createRestrictedTestToken(t *testing.T) string {
 	t.Helper()
 

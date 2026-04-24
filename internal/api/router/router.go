@@ -162,8 +162,11 @@ func SetupRoutes(app *fiber.App) {
 	salesContracts.Post("/:id/terminate", middleware.RequirePermission("sales.contract.terminate"), handlers.TerminateSalesContract)
 	salesContracts.Post("/:id/mark-default", middleware.RequirePermission("sales.contract.mark_default"), handlers.MarkSalesContractDefaulted)
 	salesContracts.Post("/:id/transfer-request", middleware.RequirePermission("sales.transfer.request"), handlers.RequestOwnershipTransfer)
-	salesContracts.Get("/:id/schedule", handlers.ListInstallmentScheduleLines)
+	salesContracts.Get("/:id/schedule", handlers.GetSalesContractSchedule)
 	salesContracts.Post("/:id/schedule/generate", middleware.RequirePermission("sales.schedule.generate"), handlers.GenerateSalesContractSchedule)
+	salesContracts.Patch("/:id/schedule-lines/:lineId", func(c *fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusNotFound)
+	})
 
 	scheduleLines := api.Group("/schedule-lines", middleware.RequireAuth(), middleware.InjectGUCVariables())
 	scheduleLines.Patch("/:id", middleware.RequirePermission("sales.schedule.edit"), handlers.UpdateInstallmentScheduleLine)
