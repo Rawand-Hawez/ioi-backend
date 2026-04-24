@@ -148,6 +148,53 @@ type FinancialAdjustment struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type InstallmentScheduleLine struct {
+	ID              pgtype.UUID `json:"id"`
+	SalesContractID pgtype.UUID `json:"sales_contract_id"`
+	ReceivableID    pgtype.UUID `json:"receivable_id"`
+	LineNo          int16       `json:"line_no"`
+	DueDate         pgtype.Date `json:"due_date"`
+	// down_payment, installment, milestone, final
+	LineType              string         `json:"line_type"`
+	Description           pgtype.Text    `json:"description"`
+	PrincipalAmount       pgtype.Numeric `json:"principal_amount"`
+	PenaltyAmountAccrued  pgtype.Numeric `json:"penalty_amount_accrued"`
+	DiscountAmountApplied pgtype.Numeric `json:"discount_amount_applied"`
+	AmountPaid            pgtype.Numeric `json:"amount_paid"`
+	AmountOutstanding     pgtype.Numeric `json:"amount_outstanding"`
+	// scheduled, due, partially_paid, paid, waived, restructured
+	Status    string             `json:"status"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type OwnershipTransfer struct {
+	ID                pgtype.UUID `json:"id"`
+	BusinessEntityID  pgtype.UUID `json:"business_entity_id"`
+	BranchID          pgtype.UUID `json:"branch_id"`
+	ProjectID         pgtype.UUID `json:"project_id"`
+	UnitID            pgtype.UUID `json:"unit_id"`
+	SalesContractID   pgtype.UUID `json:"sales_contract_id"`
+	ApprovalRequestID pgtype.UUID `json:"approval_request_id"`
+	// buyer_replacement, administrative_correction
+	TransferType  string      `json:"transfer_type"`
+	FromPartyID   pgtype.UUID `json:"from_party_id"`
+	ToPartyID     pgtype.UUID `json:"to_party_id"`
+	EffectiveDate pgtype.Date `json:"effective_date"`
+	// no_change, restructure, settle_and_restart
+	FinancialTreatment  string         `json:"financial_treatment"`
+	TransferFeeAmount   pgtype.Numeric `json:"transfer_fee_amount"`
+	TransferFeeCurrency string         `json:"transfer_fee_currency"`
+	Notes               pgtype.Text    `json:"notes"`
+	// pending, approved, rejected, completed, cancelled
+	Status            string             `json:"status"`
+	RequestedByUserID pgtype.UUID        `json:"requested_by_user_id"`
+	ApprovedByUserID  pgtype.UUID        `json:"approved_by_user_id"`
+	CompletedByUserID pgtype.UUID        `json:"completed_by_user_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Party struct {
 	ID pgtype.UUID `json:"id"`
 	// Type of party: person or organization
@@ -207,6 +254,22 @@ type PaymentAllocation struct {
 	AllocationOrder int16              `json:"allocation_order"`
 	Notes           pgtype.Text        `json:"notes"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+}
+
+type PaymentPlanTemplate struct {
+	ID               pgtype.UUID `json:"id"`
+	BusinessEntityID pgtype.UUID `json:"business_entity_id"`
+	ProjectID        pgtype.UUID `json:"project_id"`
+	Code             string      `json:"code"`
+	Name             string      `json:"name"`
+	Status           string      `json:"status"`
+	// monthly, quarterly, semi_annual, annual, custom
+	FrequencyType      string             `json:"frequency_type"`
+	InstallmentCount   int32              `json:"installment_count"`
+	GenerationRuleJson []byte             `json:"generation_rule_json"`
+	Notes              pgtype.Text        `json:"notes"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Permission struct {
@@ -276,6 +339,30 @@ type Receivable struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type Reservation struct {
+	ID               pgtype.UUID `json:"id"`
+	BusinessEntityID pgtype.UUID `json:"business_entity_id"`
+	BranchID         pgtype.UUID `json:"branch_id"`
+	ProjectID        pgtype.UUID `json:"project_id"`
+	UnitID           pgtype.UUID `json:"unit_id"`
+	CustomerID       pgtype.UUID `json:"customer_id"`
+	ReservationNo    string      `json:"reservation_no"`
+	// active, converted, expired, cancelled
+	Status            string             `json:"status"`
+	ReservedAt        pgtype.Timestamptz `json:"reserved_at"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	DepositAmount     pgtype.Numeric     `json:"deposit_amount"`
+	DepositCurrency   string             `json:"deposit_currency"`
+	DepositPaymentID  pgtype.UUID        `json:"deposit_payment_id"`
+	QuotedPriceAmount pgtype.Numeric     `json:"quoted_price_amount"`
+	DiscountAmount    pgtype.Numeric     `json:"discount_amount"`
+	Notes             pgtype.Text        `json:"notes"`
+	CreatedByUserID   pgtype.UUID        `json:"created_by_user_id"`
+	ApprovedByUserID  pgtype.UUID        `json:"approved_by_user_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ResponsibilityAssignment struct {
 	ID                 pgtype.UUID `json:"id"`
 	UnitID             pgtype.UUID `json:"unit_id"`
@@ -305,6 +392,49 @@ type RolePermission struct {
 	RoleID       pgtype.UUID        `json:"role_id"`
 	PermissionID pgtype.UUID        `json:"permission_id"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type SalesContract struct {
+	ID                  pgtype.UUID `json:"id"`
+	BusinessEntityID    pgtype.UUID `json:"business_entity_id"`
+	BranchID            pgtype.UUID `json:"branch_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	UnitID              pgtype.UUID `json:"unit_id"`
+	PrimaryBuyerID      pgtype.UUID `json:"primary_buyer_id"`
+	SourceReservationID pgtype.UUID `json:"source_reservation_id"`
+	ContractNo          string      `json:"contract_no"`
+	// draft, active, completed, cancelled, terminated, defaulted
+	Status                string             `json:"status"`
+	ContractDate          pgtype.Date        `json:"contract_date"`
+	EffectiveDate         pgtype.Date        `json:"effective_date"`
+	SalePriceAmount       pgtype.Numeric     `json:"sale_price_amount"`
+	SalePriceCurrency     string             `json:"sale_price_currency"`
+	DiscountAmount        pgtype.Numeric     `json:"discount_amount"`
+	NetContractAmount     pgtype.Numeric     `json:"net_contract_amount"`
+	DownPaymentAmount     pgtype.Numeric     `json:"down_payment_amount"`
+	FinancedAmount        pgtype.Numeric     `json:"financed_amount"`
+	PaymentPlanTemplateID pgtype.UUID        `json:"payment_plan_template_id"`
+	HandoverDatePlanned   pgtype.Date        `json:"handover_date_planned"`
+	HandoverDateActual    pgtype.Date        `json:"handover_date_actual"`
+	Notes                 pgtype.Text        `json:"notes"`
+	CreatedByUserID       pgtype.UUID        `json:"created_by_user_id"`
+	ApprovedByUserID      pgtype.UUID        `json:"approved_by_user_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SalesContractParty struct {
+	ID              pgtype.UUID `json:"id"`
+	SalesContractID pgtype.UUID `json:"sales_contract_id"`
+	PartyID         pgtype.UUID `json:"party_id"`
+	// primary_buyer, co_buyer, guarantor
+	Role          string             `json:"role"`
+	IsPrimary     bool               `json:"is_primary"`
+	EffectiveFrom pgtype.Date        `json:"effective_from"`
+	EffectiveTo   pgtype.Date        `json:"effective_to"`
+	Status        string             `json:"status"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type StructureNode struct {

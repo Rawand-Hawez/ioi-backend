@@ -19,6 +19,7 @@ type Querier interface {
 	// Returns true if user has a specific permission through any active role
 	CheckUserPermission(ctx context.Context, arg CheckUserPermissionParams) (bool, error)
 	CloseResponsibilityAssignment(ctx context.Context, arg CloseResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
+	CloseSalesContractParty(ctx context.Context, arg CloseSalesContractPartyParams) (SalesContractParty, error)
 	CloseUnitOwnership(ctx context.Context, arg CloseUnitOwnershipParams) (UnitOwnership, error)
 	CountApprovalPolicies(ctx context.Context, arg CountApprovalPoliciesParams) (int64, error)
 	CountApprovalRequests(ctx context.Context, arg CountApprovalRequestsParams) (int64, error)
@@ -31,11 +32,14 @@ type Querier interface {
 	CountCreditBalances(ctx context.Context, arg CountCreditBalancesParams) (int64, error)
 	CountFinancialAdjustments(ctx context.Context, arg CountFinancialAdjustmentsParams) (int64, error)
 	CountParties(ctx context.Context, arg CountPartiesParams) (int64, error)
+	CountPaymentPlanTemplates(ctx context.Context, arg CountPaymentPlanTemplatesParams) (int64, error)
 	CountPayments(ctx context.Context, arg CountPaymentsParams) (int64, error)
 	CountPendingApprovers(ctx context.Context, approvalRequestID pgtype.UUID) (int64, error)
 	CountProjects(ctx context.Context, arg CountProjectsParams) (int64, error)
 	CountReceivables(ctx context.Context, arg CountReceivablesParams) (int64, error)
+	CountReservations(ctx context.Context, arg CountReservationsParams) (int64, error)
 	CountResponsibilityAssignments(ctx context.Context, arg CountResponsibilityAssignmentsParams) (int64, error)
+	CountSalesContracts(ctx context.Context, arg CountSalesContractsParams) (int64, error)
 	CountStructureNodes(ctx context.Context, arg CountStructureNodesParams) (int64, error)
 	CountUnitOwnerships(ctx context.Context, arg CountUnitOwnershipsParams) (int64, error)
 	CountUnits(ctx context.Context, arg CountUnitsParams) (int64, error)
@@ -46,15 +50,24 @@ type Querier interface {
 	CreateBusinessEntity(ctx context.Context, arg CreateBusinessEntityParams) (BusinessEntity, error)
 	CreateCreditBalance(ctx context.Context, arg CreateCreditBalanceParams) (CreditBalance, error)
 	CreateFinancialAdjustment(ctx context.Context, arg CreateFinancialAdjustmentParams) (FinancialAdjustment, error)
+	CreateInstallmentScheduleLine(ctx context.Context, arg CreateInstallmentScheduleLineParams) (InstallmentScheduleLine, error)
+	// =============================================================================
+	// Ownership Transfers
+	// =============================================================================
+	CreateOwnershipTransfer(ctx context.Context, arg CreateOwnershipTransferParams) (OwnershipTransfer, error)
 	CreateParty(ctx context.Context, arg CreatePartyParams) (Party, error)
 	CreatePayment(ctx context.Context, arg CreatePaymentParams) (Payment, error)
 	// =============================================================================
 	// Payment Allocations
 	// =============================================================================
 	CreatePaymentAllocation(ctx context.Context, arg CreatePaymentAllocationParams) (PaymentAllocation, error)
+	CreatePaymentPlanTemplate(ctx context.Context, arg CreatePaymentPlanTemplateParams) (PaymentPlanTemplate, error)
 	CreateProject(ctx context.Context, arg CreateProjectParams) (Project, error)
 	CreateReceivable(ctx context.Context, arg CreateReceivableParams) (Receivable, error)
+	CreateReservation(ctx context.Context, arg CreateReservationParams) (Reservation, error)
 	CreateResponsibilityAssignment(ctx context.Context, arg CreateResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
+	CreateSalesContract(ctx context.Context, arg CreateSalesContractParams) (SalesContract, error)
+	CreateSalesContractParty(ctx context.Context, arg CreateSalesContractPartyParams) (SalesContractParty, error)
 	CreateStructureNode(ctx context.Context, arg CreateStructureNodeParams) (StructureNode, error)
 	CreateUnit(ctx context.Context, arg CreateUnitParams) (Unit, error)
 	CreateUnitOwnership(ctx context.Context, arg CreateUnitOwnershipParams) (UnitOwnership, error)
@@ -63,7 +76,10 @@ type Querier interface {
 	DeactivateProject(ctx context.Context, id pgtype.UUID) error
 	DeactivateStructureNode(ctx context.Context, id pgtype.UUID) error
 	DeactivateUnit(ctx context.Context, id pgtype.UUID) error
+	ExpireReservations(ctx context.Context) ([]pgtype.UUID, error)
+	GetActiveReservationForUnit(ctx context.Context, unitID pgtype.UUID) (Reservation, error)
 	GetActiveResponsibilityAssignment(ctx context.Context, arg GetActiveResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
+	GetActiveSalesContractForUnit(ctx context.Context, unitID pgtype.UUID) (SalesContract, error)
 	GetApprovalPolicy(ctx context.Context, id pgtype.UUID) (ApprovalPolicy, error)
 	GetApprovalPolicyByCode(ctx context.Context, arg GetApprovalPolicyByCodeParams) (ApprovalPolicy, error)
 	GetApprovalRequest(ctx context.Context, id pgtype.UUID) (ApprovalRequest, error)
@@ -74,16 +90,24 @@ type Querier interface {
 	GetBusinessEntityByCode(ctx context.Context, code string) (BusinessEntity, error)
 	GetCreditBalance(ctx context.Context, id pgtype.UUID) (CreditBalance, error)
 	GetFinancialAdjustment(ctx context.Context, id pgtype.UUID) (FinancialAdjustment, error)
+	GetInstallmentScheduleLine(ctx context.Context, id pgtype.UUID) (InstallmentScheduleLine, error)
+	GetNextScheduleLineNumber(ctx context.Context, salesContractID pgtype.UUID) (int32, error)
+	GetOwnershipTransfer(ctx context.Context, id pgtype.UUID) (OwnershipTransfer, error)
+	GetOwnershipTransferByApprovalRequest(ctx context.Context, approvalRequestID pgtype.UUID) (OwnershipTransfer, error)
 	GetParty(ctx context.Context, id pgtype.UUID) (Party, error)
 	// =============================================================================
 	// Statement Queries
 	// =============================================================================
 	GetPartyStatement(ctx context.Context, arg GetPartyStatementParams) ([]Receivable, error)
 	GetPayment(ctx context.Context, id pgtype.UUID) (Payment, error)
+	GetPaymentPlanTemplate(ctx context.Context, id pgtype.UUID) (PaymentPlanTemplate, error)
 	GetPermission(ctx context.Context, id pgtype.UUID) (Permission, error)
 	GetProject(ctx context.Context, id pgtype.UUID) (Project, error)
 	GetReceivable(ctx context.Context, id pgtype.UUID) (Receivable, error)
+	GetReservation(ctx context.Context, id pgtype.UUID) (Reservation, error)
 	GetRole(ctx context.Context, id pgtype.UUID) (Role, error)
+	GetSalesContract(ctx context.Context, id pgtype.UUID) (SalesContract, error)
+	GetSalesContractBySourceReservation(ctx context.Context, sourceReservationID pgtype.UUID) (SalesContract, error)
 	GetStructureNode(ctx context.Context, id pgtype.UUID) (StructureNode, error)
 	GetUnit(ctx context.Context, id pgtype.UUID) (Unit, error)
 	GetUnitStatement(ctx context.Context, arg GetUnitStatementParams) ([]Receivable, error)
@@ -94,6 +118,8 @@ type Querier interface {
 	GetUserPermissions(ctx context.Context, userID pgtype.UUID) ([]GetUserPermissionsRow, error)
 	GetUserRoleAssignment(ctx context.Context, id pgtype.UUID) (UserRoleScopeAssignment, error)
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
+	LinkReservationDepositPayment(ctx context.Context, arg LinkReservationDepositPaymentParams) (Reservation, error)
+	LinkScheduleLineReceivable(ctx context.Context, arg LinkScheduleLineReceivableParams) (InstallmentScheduleLine, error)
 	ListAllocationsForPayment(ctx context.Context, paymentID pgtype.UUID) ([]PaymentAllocation, error)
 	ListAllocationsForReceivable(ctx context.Context, receivableID pgtype.UUID) ([]PaymentAllocation, error)
 	// backend/db/queries/approvals_audit.sql
@@ -119,12 +145,20 @@ type Querier interface {
 	// =============================================================================
 	ListFinancialAdjustments(ctx context.Context, arg ListFinancialAdjustmentsParams) ([]FinancialAdjustment, error)
 	// =============================================================================
+	// Installment Schedule Lines
+	// =============================================================================
+	ListInstallmentScheduleLines(ctx context.Context, salesContractID pgtype.UUID) ([]InstallmentScheduleLine, error)
+	// =============================================================================
 	// Party Domain Queries
 	// =============================================================================
 	// =============================================================================
 	// Parties
 	// =============================================================================
 	ListParties(ctx context.Context, arg ListPartiesParams) ([]Party, error)
+	// =============================================================================
+	// Payment Plan Templates
+	// =============================================================================
+	ListPaymentPlanTemplates(ctx context.Context, arg ListPaymentPlanTemplatesParams) ([]PaymentPlanTemplate, error)
 	// =============================================================================
 	// Payments
 	// =============================================================================
@@ -148,6 +182,14 @@ type Querier interface {
 	// Receivables
 	// =============================================================================
 	ListReceivables(ctx context.Context, arg ListReceivablesParams) ([]Receivable, error)
+	// backend/db/queries/sales.sql
+	// =============================================================================
+	// Sales Domain Queries
+	// =============================================================================
+	// =============================================================================
+	// Reservations
+	// =============================================================================
+	ListReservations(ctx context.Context, arg ListReservationsParams) ([]Reservation, error)
 	// =============================================================================
 	// Responsibility Assignments
 	// =============================================================================
@@ -163,6 +205,14 @@ type Querier interface {
 	// Roles
 	// =============================================================================
 	ListRoles(ctx context.Context, isActive pgtype.Bool) ([]Role, error)
+	// =============================================================================
+	// Sales Contract Parties
+	// =============================================================================
+	ListSalesContractParties(ctx context.Context, salesContractID pgtype.UUID) ([]SalesContractParty, error)
+	// =============================================================================
+	// Sales Contracts
+	// =============================================================================
+	ListSalesContracts(ctx context.Context, arg ListSalesContractsParams) ([]SalesContract, error)
 	// =============================================================================
 	// Structure Nodes
 	// =============================================================================
@@ -183,16 +233,22 @@ type Querier interface {
 	RecordApproverDecision(ctx context.Context, arg RecordApproverDecisionParams) (ApprovalRequestApprover, error)
 	RejectAdjustment(ctx context.Context, arg RejectAdjustmentParams) (FinancialAdjustment, error)
 	RemoveRoleFromUser(ctx context.Context, id pgtype.UUID) (UserRoleScopeAssignment, error)
+	SetOwnershipTransferCompletion(ctx context.Context, arg SetOwnershipTransferCompletionParams) (OwnershipTransfer, error)
 	UpdateApprovalPolicy(ctx context.Context, arg UpdateApprovalPolicyParams) (ApprovalPolicy, error)
 	UpdateApprovalRequestStatus(ctx context.Context, arg UpdateApprovalRequestStatusParams) (ApprovalRequest, error)
 	UpdateBranch(ctx context.Context, arg UpdateBranchParams) (Branch, error)
 	UpdateBusinessEntity(ctx context.Context, arg UpdateBusinessEntityParams) (BusinessEntity, error)
+	UpdateInstallmentScheduleLine(ctx context.Context, arg UpdateInstallmentScheduleLineParams) (InstallmentScheduleLine, error)
+	UpdateOwnershipTransferStatus(ctx context.Context, arg UpdateOwnershipTransferStatusParams) (OwnershipTransfer, error)
 	UpdateParty(ctx context.Context, arg UpdatePartyParams) (Party, error)
 	UpdatePaymentUnapplied(ctx context.Context, arg UpdatePaymentUnappliedParams) (Payment, error)
 	UpdateProject(ctx context.Context, arg UpdateProjectParams) (Project, error)
 	UpdateReceivableAdjustedAmount(ctx context.Context, arg UpdateReceivableAdjustedAmountParams) (Receivable, error)
 	UpdateReceivableCreditedAmount(ctx context.Context, arg UpdateReceivableCreditedAmountParams) (Receivable, error)
 	UpdateReceivablePaidAmount(ctx context.Context, arg UpdateReceivablePaidAmountParams) (Receivable, error)
+	UpdateReservationStatus(ctx context.Context, arg UpdateReservationStatusParams) (Reservation, error)
+	UpdateSalesContract(ctx context.Context, arg UpdateSalesContractParams) (SalesContract, error)
+	UpdateSalesContractStatus(ctx context.Context, arg UpdateSalesContractStatusParams) (SalesContract, error)
 	UpdateStructureNode(ctx context.Context, arg UpdateStructureNodeParams) (StructureNode, error)
 	UpdateUnit(ctx context.Context, arg UpdateUnitParams) (Unit, error)
 	// Permission: inventory.unit.edit_code (per technical-specs.md Section 12.2)

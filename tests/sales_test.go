@@ -74,6 +74,31 @@ func TestSalesScheduleRoutesMatchPhase7Plan(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, oldMutationRR.Code)
 }
 
+func TestSalesContractRejectsInconsistentAmounts(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Constraint Buyer")
+	unit := getSalesTestUnit(t, unitID)
+
+	body := map[string]any{
+		"business_entity_id":  unit["business_entity_id"],
+		"branch_id":           unit["branch_id"],
+		"project_id":          unit["project_id"],
+		"unit_id":             unitID,
+		"primary_buyer_id":    buyerID,
+		"contract_date":       "2026-04-24",
+		"effective_date":      "2026-04-24",
+		"sale_price_amount":   "100000.00",
+		"discount_amount":     "5000.00",
+		"net_contract_amount": "99000.00",
+		"down_payment_amount": "10000.00",
+		"financed_amount":     "85000.00",
+		"sale_price_currency": "USD",
+	}
+
+	rr := salesRequest(t, "POST", "/api/v1/sales-contracts", body)
+	require.Equal(t, http.StatusBadRequest, rr.Code)
+}
+
 func createRestrictedTestToken(t *testing.T) string {
 	t.Helper()
 
