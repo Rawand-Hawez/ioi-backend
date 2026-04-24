@@ -99,11 +99,90 @@ func TestSalesContractRejectsInconsistentAmounts(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
+func TestPaymentPlanTemplateValidatesGenerationRule(t *testing.T) {
+	businessEntityID := createSalesTestBusinessEntity(t)
+
+	cases := []struct {
+		name string
+		rule map[string]any
+	}{
+		{
+			name: "percentages do not total 100",
+			rule: map[string]any{
+				"down_payment": map[string]any{"percentage": 10, "anchor": "reservation"},
+				"tranches": []map[string]any{
+					{"percentage": 80, "anchor": "contract_date", "installment_count": 8, "frequency": "monthly"},
+				},
+			},
+		},
+		{
+			name: "invalid anchor",
+			rule: map[string]any{
+				"down_payment": map[string]any{"percentage": 10, "anchor": "invalid"},
+				"tranches": []map[string]any{
+					{"percentage": 90, "anchor": "contract_date", "installment_count": 9, "frequency": "monthly"},
+				},
+			},
+		},
+		{
+			name: "installment count mismatch",
+			rule: map[string]any{
+				"down_payment": map[string]any{"percentage": 10, "anchor": "reservation"},
+				"tranches": []map[string]any{
+					{"percentage": 90, "anchor": "contract_date", "installment_count": 8, "frequency": "monthly"},
+				},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := salesRequest(t, "POST", "/api/v1/payment-plan-templates", map[string]any{
+				"business_entity_id":   businessEntityID,
+				"code":                 fmt.Sprintf("INVALID_PLAN_%d", time.Now().UnixNano()),
+				"name":                 "Invalid " + tc.name,
+				"status":               "active",
+				"frequency_type":       "monthly",
+				"installment_count":    9,
+				"generation_rule_json": tc.rule,
+			})
+			require.Equal(t, http.StatusBadRequest, rr.Code)
+		})
+	}
+}
+
+func TestPaymentPlanTemplateAcceptsValidGenerationRule(t *testing.T) {
+	businessEntityID := createSalesTestBusinessEntity(t)
+
+	rr := salesRequest(t, "POST", "/api/v1/payment-plan-templates", map[string]any{
+		"business_entity_id": businessEntityID,
+		"code":               fmt.Sprintf("VALID_PLAN_%d", time.Now().UnixNano()),
+		"name":               "Valid payment plan",
+		"status":             "active",
+		"frequency_type":     "monthly",
+		"installment_count":  9,
+		"generation_rule_json": map[string]any{
+			"down_payment": map[string]any{"percentage": 10, "anchor": "reservation"},
+			"tranches": []map[string]any{
+				{"percentage": 90, "anchor": "contract_date", "installment_count": 9, "frequency": "monthly"},
+			},
+		},
+	})
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+}
+
 func createRestrictedTestToken(t *testing.T) string {
 	t.Helper()
 
 	_, token := CreateSecondTestUser(t)
 	return token
+}
+
+func createSalesTestBusinessEntity(t *testing.T) string {
+	t.Helper()
+
+	timestamp := time.Now().UnixNano()
+	return CreateTestBusinessEntity(t, testApp, testToken, fmt.Sprintf("SALESENTITY_%d", timestamp), "Sales Test Entity")
 }
 
 func createSalesTestParty(t *testing.T, name string) string {
@@ -129,8 +208,10 @@ func createSalesTestPaymentPlanTemplate(t *testing.T, businessEntityID string, r
 
 	if rule == nil {
 		rule = map[string]any{
-			"type":              "equal_installments",
-			"down_payment_rate": 0.10,
+			"down_payment": map[string]any{"percentage": 10, "anchor": "reservation"},
+			"tranches": []map[string]any{
+				{"percentage": 90, "anchor": "contract_date", "installment_count": 12, "frequency": "monthly"},
+			},
 		}
 	}
 
