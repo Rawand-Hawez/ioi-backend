@@ -18,6 +18,7 @@ type Querier interface {
 	CancelApprovalRequest(ctx context.Context, id pgtype.UUID) (ApprovalRequest, error)
 	// Returns true if user has a specific permission through any active role
 	CheckUserPermission(ctx context.Context, arg CheckUserPermissionParams) (bool, error)
+	CloseActiveSalesContractPartiesForParty(ctx context.Context, arg CloseActiveSalesContractPartiesForPartyParams) ([]SalesContractParty, error)
 	CloseResponsibilityAssignment(ctx context.Context, arg CloseResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
 	CloseSalesContractParty(ctx context.Context, arg CloseSalesContractPartyParams) (SalesContractParty, error)
 	CloseUnitOwnership(ctx context.Context, arg CloseUnitOwnershipParams) (UnitOwnership, error)
@@ -80,6 +81,8 @@ type Querier interface {
 	GetActiveReservationForUnit(ctx context.Context, unitID pgtype.UUID) (Reservation, error)
 	GetActiveResponsibilityAssignment(ctx context.Context, arg GetActiveResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
 	GetActiveSalesContractForUnit(ctx context.Context, unitID pgtype.UUID) (SalesContract, error)
+	GetActiveSalesContractPartyForParty(ctx context.Context, arg GetActiveSalesContractPartyForPartyParams) (SalesContractParty, error)
+	GetActiveUnitOwnershipForParty(ctx context.Context, arg GetActiveUnitOwnershipForPartyParams) (UnitOwnership, error)
 	GetApprovalPolicy(ctx context.Context, id pgtype.UUID) (ApprovalPolicy, error)
 	GetApprovalPolicyByCode(ctx context.Context, arg GetApprovalPolicyByCodeParams) (ApprovalPolicy, error)
 	GetApprovalRequest(ctx context.Context, id pgtype.UUID) (ApprovalRequest, error)
@@ -91,6 +94,7 @@ type Querier interface {
 	GetCreditBalance(ctx context.Context, id pgtype.UUID) (CreditBalance, error)
 	GetFinancialAdjustment(ctx context.Context, id pgtype.UUID) (FinancialAdjustment, error)
 	GetInstallmentScheduleLine(ctx context.Context, id pgtype.UUID) (InstallmentScheduleLine, error)
+	GetLatestSalesApprovalRequest(ctx context.Context, arg GetLatestSalesApprovalRequestParams) (ApprovalRequest, error)
 	GetNextScheduleLineNumber(ctx context.Context, salesContractID pgtype.UUID) (int32, error)
 	GetOwnershipTransfer(ctx context.Context, id pgtype.UUID) (OwnershipTransfer, error)
 	GetOwnershipTransferByApprovalRequest(ctx context.Context, approvalRequestID pgtype.UUID) (OwnershipTransfer, error)
@@ -136,6 +140,7 @@ type Querier interface {
 	ListBranches(ctx context.Context, arg ListBranchesParams) ([]Branch, error)
 	// backend/db/queries/business_structure.sql
 	ListBusinessEntities(ctx context.Context, arg ListBusinessEntitiesParams) ([]BusinessEntity, error)
+	ListContractScheduleLinesWithReceivables(ctx context.Context, salesContractID pgtype.UUID) ([]InstallmentScheduleLine, error)
 	// =============================================================================
 	// Credit Balances
 	// =============================================================================
@@ -239,6 +244,7 @@ type Querier interface {
 	UpdateBranch(ctx context.Context, arg UpdateBranchParams) (Branch, error)
 	UpdateBusinessEntity(ctx context.Context, arg UpdateBusinessEntityParams) (BusinessEntity, error)
 	UpdateInstallmentScheduleLine(ctx context.Context, arg UpdateInstallmentScheduleLineParams) (InstallmentScheduleLine, error)
+	UpdateOwnershipTransferApprovalRequest(ctx context.Context, arg UpdateOwnershipTransferApprovalRequestParams) (OwnershipTransfer, error)
 	UpdateOwnershipTransferStatus(ctx context.Context, arg UpdateOwnershipTransferStatusParams) (OwnershipTransfer, error)
 	UpdateParty(ctx context.Context, arg UpdatePartyParams) (Party, error)
 	UpdatePaymentUnapplied(ctx context.Context, arg UpdatePaymentUnappliedParams) (Payment, error)
@@ -248,6 +254,7 @@ type Querier interface {
 	UpdateReceivablePaidAmount(ctx context.Context, arg UpdateReceivablePaidAmountParams) (Receivable, error)
 	UpdateReservationStatus(ctx context.Context, arg UpdateReservationStatusParams) (Reservation, error)
 	UpdateSalesContract(ctx context.Context, arg UpdateSalesContractParams) (SalesContract, error)
+	UpdateSalesContractPrimaryBuyer(ctx context.Context, arg UpdateSalesContractPrimaryBuyerParams) (SalesContract, error)
 	UpdateSalesContractStatus(ctx context.Context, arg UpdateSalesContractStatusParams) (SalesContract, error)
 	UpdateStructureNode(ctx context.Context, arg UpdateStructureNodeParams) (StructureNode, error)
 	UpdateUnit(ctx context.Context, arg UpdateUnitParams) (Unit, error)

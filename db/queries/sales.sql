@@ -124,6 +124,12 @@ SELECT * FROM public.sales_contracts WHERE unit_id = $1 AND status = 'active' LI
 -- name: GetSalesContractBySourceReservation :one
 SELECT * FROM public.sales_contracts WHERE source_reservation_id = $1 LIMIT 1;
 
+-- name: UpdateSalesContractPrimaryBuyer :one
+UPDATE public.sales_contracts
+SET primary_buyer_id = $2, updated_at = timezone('utc', now())
+WHERE id = $1
+RETURNING *;
+
 -- =============================================================================
 -- Payment Plan Templates
 -- =============================================================================
@@ -195,6 +201,11 @@ SELECT COALESCE(MAX(line_no), 0)::smallint + 1 AS next_line_no
 FROM public.installment_schedule_lines
 WHERE sales_contract_id = $1;
 
+-- name: ListContractScheduleLinesWithReceivables :many
+SELECT * FROM public.installment_schedule_lines
+WHERE sales_contract_id = $1
+ORDER BY due_date, line_no;
+
 -- =============================================================================
 -- Sales Contract Parties
 -- =============================================================================
@@ -214,6 +225,23 @@ RETURNING *;
 UPDATE public.sales_contract_parties
 SET effective_to = $2, status = 'inactive', updated_at = timezone('utc', now())
 WHERE id = $1 AND effective_to IS NULL
+RETURNING *;
+
+-- name: GetActiveSalesContractPartyForParty :one
+SELECT * FROM public.sales_contract_parties
+WHERE sales_contract_id = $1
+  AND party_id = $2
+  AND effective_to IS NULL
+  AND status = 'active'
+LIMIT 1;
+
+-- name: CloseActiveSalesContractPartiesForParty :many
+UPDATE public.sales_contract_parties
+SET effective_to = $3, status = 'inactive', updated_at = timezone('utc', now())
+WHERE sales_contract_id = $1
+  AND party_id = $2
+  AND effective_to IS NULL
+  AND status = 'active'
 RETURNING *;
 
 -- =============================================================================
@@ -248,3 +276,19 @@ SET status = 'completed',
     updated_at = timezone('utc', now())
 WHERE id = $1
 RETURNING *;
+
+-- name: UpdateOwnershipTransferApprovalRequest :one
+UPDATE public.ownership_transfers
+SET approval_request_id = $2, updated_at = timezone('utc', now())
+WHERE id = $1
+RETURNING *;
+
+-- name: GetLatestSalesApprovalRequest :one
+SELECT *
+FROM public.approval_requests
+WHERE module = 'sales'
+  AND source_record_type = $1
+  AND source_record_id = $2
+  AND request_type = $3
+ORDER BY submitted_at DESC
+LIMIT 1;

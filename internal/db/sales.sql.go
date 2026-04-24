@@ -11,6 +11,53 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const closeActiveSalesContractPartiesForParty = `-- name: CloseActiveSalesContractPartiesForParty :many
+UPDATE public.sales_contract_parties
+SET effective_to = $3, status = 'inactive', updated_at = timezone('utc', now())
+WHERE sales_contract_id = $1
+  AND party_id = $2
+  AND effective_to IS NULL
+  AND status = 'active'
+RETURNING id, sales_contract_id, party_id, role, is_primary, effective_from, effective_to, status, created_at, updated_at
+`
+
+type CloseActiveSalesContractPartiesForPartyParams struct {
+	SalesContractID pgtype.UUID `json:"sales_contract_id"`
+	PartyID         pgtype.UUID `json:"party_id"`
+	EffectiveTo     pgtype.Date `json:"effective_to"`
+}
+
+func (q *Queries) CloseActiveSalesContractPartiesForParty(ctx context.Context, arg CloseActiveSalesContractPartiesForPartyParams) ([]SalesContractParty, error) {
+	rows, err := q.db.Query(ctx, closeActiveSalesContractPartiesForParty, arg.SalesContractID, arg.PartyID, arg.EffectiveTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SalesContractParty{}
+	for rows.Next() {
+		var i SalesContractParty
+		if err := rows.Scan(
+			&i.ID,
+			&i.SalesContractID,
+			&i.PartyID,
+			&i.Role,
+			&i.IsPrimary,
+			&i.EffectiveFrom,
+			&i.EffectiveTo,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const closeSalesContractParty = `-- name: CloseSalesContractParty :one
 UPDATE public.sales_contract_parties
 SET effective_to = $2, status = 'inactive', updated_at = timezone('utc', now())
@@ -604,6 +651,38 @@ func (q *Queries) GetActiveSalesContractForUnit(ctx context.Context, unitID pgty
 	return i, err
 }
 
+const getActiveSalesContractPartyForParty = `-- name: GetActiveSalesContractPartyForParty :one
+SELECT id, sales_contract_id, party_id, role, is_primary, effective_from, effective_to, status, created_at, updated_at FROM public.sales_contract_parties
+WHERE sales_contract_id = $1
+  AND party_id = $2
+  AND effective_to IS NULL
+  AND status = 'active'
+LIMIT 1
+`
+
+type GetActiveSalesContractPartyForPartyParams struct {
+	SalesContractID pgtype.UUID `json:"sales_contract_id"`
+	PartyID         pgtype.UUID `json:"party_id"`
+}
+
+func (q *Queries) GetActiveSalesContractPartyForParty(ctx context.Context, arg GetActiveSalesContractPartyForPartyParams) (SalesContractParty, error) {
+	row := q.db.QueryRow(ctx, getActiveSalesContractPartyForParty, arg.SalesContractID, arg.PartyID)
+	var i SalesContractParty
+	err := row.Scan(
+		&i.ID,
+		&i.SalesContractID,
+		&i.PartyID,
+		&i.Role,
+		&i.IsPrimary,
+		&i.EffectiveFrom,
+		&i.EffectiveTo,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getInstallmentScheduleLine = `-- name: GetInstallmentScheduleLine :one
 SELECT id, sales_contract_id, receivable_id, line_no, due_date, line_type, description, principal_amount, penalty_amount_accrued, discount_amount_applied, amount_paid, amount_outstanding, status, created_at, updated_at FROM public.installment_schedule_lines WHERE id = $1
 `
@@ -625,6 +704,48 @@ func (q *Queries) GetInstallmentScheduleLine(ctx context.Context, id pgtype.UUID
 		&i.AmountPaid,
 		&i.AmountOutstanding,
 		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLatestSalesApprovalRequest = `-- name: GetLatestSalesApprovalRequest :one
+SELECT id, business_entity_id, branch_id, approval_policy_id, module, request_type, source_record_type, source_record_id, requested_by_user_id, assigned_to_user_id, status, submitted_at, decided_at, decision_reason, payload_snapshot_json, created_at, updated_at
+FROM public.approval_requests
+WHERE module = 'sales'
+  AND source_record_type = $1
+  AND source_record_id = $2
+  AND request_type = $3
+ORDER BY submitted_at DESC
+LIMIT 1
+`
+
+type GetLatestSalesApprovalRequestParams struct {
+	SourceRecordType string      `json:"source_record_type"`
+	SourceRecordID   pgtype.UUID `json:"source_record_id"`
+	RequestType      string      `json:"request_type"`
+}
+
+func (q *Queries) GetLatestSalesApprovalRequest(ctx context.Context, arg GetLatestSalesApprovalRequestParams) (ApprovalRequest, error) {
+	row := q.db.QueryRow(ctx, getLatestSalesApprovalRequest, arg.SourceRecordType, arg.SourceRecordID, arg.RequestType)
+	var i ApprovalRequest
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessEntityID,
+		&i.BranchID,
+		&i.ApprovalPolicyID,
+		&i.Module,
+		&i.RequestType,
+		&i.SourceRecordType,
+		&i.SourceRecordID,
+		&i.RequestedByUserID,
+		&i.AssignedToUserID,
+		&i.Status,
+		&i.SubmittedAt,
+		&i.DecidedAt,
+		&i.DecisionReason,
+		&i.PayloadSnapshotJson,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -913,6 +1034,48 @@ func (q *Queries) LinkScheduleLineReceivable(ctx context.Context, arg LinkSchedu
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listContractScheduleLinesWithReceivables = `-- name: ListContractScheduleLinesWithReceivables :many
+SELECT id, sales_contract_id, receivable_id, line_no, due_date, line_type, description, principal_amount, penalty_amount_accrued, discount_amount_applied, amount_paid, amount_outstanding, status, created_at, updated_at FROM public.installment_schedule_lines
+WHERE sales_contract_id = $1
+ORDER BY due_date, line_no
+`
+
+func (q *Queries) ListContractScheduleLinesWithReceivables(ctx context.Context, salesContractID pgtype.UUID) ([]InstallmentScheduleLine, error) {
+	rows, err := q.db.Query(ctx, listContractScheduleLinesWithReceivables, salesContractID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InstallmentScheduleLine{}
+	for rows.Next() {
+		var i InstallmentScheduleLine
+		if err := rows.Scan(
+			&i.ID,
+			&i.SalesContractID,
+			&i.ReceivableID,
+			&i.LineNo,
+			&i.DueDate,
+			&i.LineType,
+			&i.Description,
+			&i.PrincipalAmount,
+			&i.PenaltyAmountAccrued,
+			&i.DiscountAmountApplied,
+			&i.AmountPaid,
+			&i.AmountOutstanding,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listInstallmentScheduleLines = `-- name: ListInstallmentScheduleLines :many
@@ -1324,6 +1487,47 @@ func (q *Queries) UpdateInstallmentScheduleLine(ctx context.Context, arg UpdateI
 	return i, err
 }
 
+const updateOwnershipTransferApprovalRequest = `-- name: UpdateOwnershipTransferApprovalRequest :one
+UPDATE public.ownership_transfers
+SET approval_request_id = $2, updated_at = timezone('utc', now())
+WHERE id = $1
+RETURNING id, business_entity_id, branch_id, project_id, unit_id, sales_contract_id, approval_request_id, transfer_type, from_party_id, to_party_id, effective_date, financial_treatment, transfer_fee_amount, transfer_fee_currency, notes, status, requested_by_user_id, approved_by_user_id, completed_by_user_id, created_at, updated_at
+`
+
+type UpdateOwnershipTransferApprovalRequestParams struct {
+	ID                pgtype.UUID `json:"id"`
+	ApprovalRequestID pgtype.UUID `json:"approval_request_id"`
+}
+
+func (q *Queries) UpdateOwnershipTransferApprovalRequest(ctx context.Context, arg UpdateOwnershipTransferApprovalRequestParams) (OwnershipTransfer, error) {
+	row := q.db.QueryRow(ctx, updateOwnershipTransferApprovalRequest, arg.ID, arg.ApprovalRequestID)
+	var i OwnershipTransfer
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessEntityID,
+		&i.BranchID,
+		&i.ProjectID,
+		&i.UnitID,
+		&i.SalesContractID,
+		&i.ApprovalRequestID,
+		&i.TransferType,
+		&i.FromPartyID,
+		&i.ToPartyID,
+		&i.EffectiveDate,
+		&i.FinancialTreatment,
+		&i.TransferFeeAmount,
+		&i.TransferFeeCurrency,
+		&i.Notes,
+		&i.Status,
+		&i.RequestedByUserID,
+		&i.ApprovedByUserID,
+		&i.CompletedByUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateOwnershipTransferStatus = `-- name: UpdateOwnershipTransferStatus :one
 UPDATE public.ownership_transfers
 SET status = $2, updated_at = timezone('utc', now())
@@ -1449,6 +1653,51 @@ func (q *Queries) UpdateSalesContract(ctx context.Context, arg UpdateSalesContra
 		arg.Notes,
 		arg.ID,
 	)
+	var i SalesContract
+	err := row.Scan(
+		&i.ID,
+		&i.BusinessEntityID,
+		&i.BranchID,
+		&i.ProjectID,
+		&i.UnitID,
+		&i.PrimaryBuyerID,
+		&i.SourceReservationID,
+		&i.ContractNo,
+		&i.Status,
+		&i.ContractDate,
+		&i.EffectiveDate,
+		&i.SalePriceAmount,
+		&i.SalePriceCurrency,
+		&i.DiscountAmount,
+		&i.NetContractAmount,
+		&i.DownPaymentAmount,
+		&i.FinancedAmount,
+		&i.PaymentPlanTemplateID,
+		&i.HandoverDatePlanned,
+		&i.HandoverDateActual,
+		&i.Notes,
+		&i.CreatedByUserID,
+		&i.ApprovedByUserID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateSalesContractPrimaryBuyer = `-- name: UpdateSalesContractPrimaryBuyer :one
+UPDATE public.sales_contracts
+SET primary_buyer_id = $2, updated_at = timezone('utc', now())
+WHERE id = $1
+RETURNING id, business_entity_id, branch_id, project_id, unit_id, primary_buyer_id, source_reservation_id, contract_no, status, contract_date, effective_date, sale_price_amount, sale_price_currency, discount_amount, net_contract_amount, down_payment_amount, financed_amount, payment_plan_template_id, handover_date_planned, handover_date_actual, notes, created_by_user_id, approved_by_user_id, created_at, updated_at
+`
+
+type UpdateSalesContractPrimaryBuyerParams struct {
+	ID             pgtype.UUID `json:"id"`
+	PrimaryBuyerID pgtype.UUID `json:"primary_buyer_id"`
+}
+
+func (q *Queries) UpdateSalesContractPrimaryBuyer(ctx context.Context, arg UpdateSalesContractPrimaryBuyerParams) (SalesContract, error) {
+	row := q.db.QueryRow(ctx, updateSalesContractPrimaryBuyer, arg.ID, arg.PrimaryBuyerID)
 	var i SalesContract
 	err := row.Scan(
 		&i.ID,

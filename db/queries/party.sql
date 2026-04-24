@@ -109,6 +109,14 @@ UPDATE public.unit_ownerships SET
 WHERE id = $1
 RETURNING *;
 
+-- name: GetActiveUnitOwnershipForParty :one
+SELECT * FROM public.unit_ownerships
+WHERE unit_id = $1
+  AND party_id = $2
+  AND status = 'active'
+  AND effective_to IS NULL
+LIMIT 1;
+
 -- =============================================================================
 -- Responsibility Assignments
 -- =============================================================================

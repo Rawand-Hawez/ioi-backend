@@ -370,6 +370,38 @@ func (q *Queries) GetActiveResponsibilityAssignment(ctx context.Context, arg Get
 	return i, err
 }
 
+const getActiveUnitOwnershipForParty = `-- name: GetActiveUnitOwnershipForParty :one
+SELECT id, unit_id, party_id, share_percentage, effective_from, effective_to, status, notes, created_at, updated_at FROM public.unit_ownerships
+WHERE unit_id = $1
+  AND party_id = $2
+  AND status = 'active'
+  AND effective_to IS NULL
+LIMIT 1
+`
+
+type GetActiveUnitOwnershipForPartyParams struct {
+	UnitID  pgtype.UUID `json:"unit_id"`
+	PartyID pgtype.UUID `json:"party_id"`
+}
+
+func (q *Queries) GetActiveUnitOwnershipForParty(ctx context.Context, arg GetActiveUnitOwnershipForPartyParams) (UnitOwnership, error) {
+	row := q.db.QueryRow(ctx, getActiveUnitOwnershipForParty, arg.UnitID, arg.PartyID)
+	var i UnitOwnership
+	err := row.Scan(
+		&i.ID,
+		&i.UnitID,
+		&i.PartyID,
+		&i.SharePercentage,
+		&i.EffectiveFrom,
+		&i.EffectiveTo,
+		&i.Status,
+		&i.Notes,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getParty = `-- name: GetParty :one
 SELECT id, party_type, party_code, display_name, full_name, first_name, middle_name, last_name, organization_name, primary_phone, secondary_phone, primary_email, date_of_birth, nationality, national_id_no, passport_no, registration_no, tax_no, preferred_language, legacy_ref, notes, status, created_at, updated_at FROM public.parties WHERE id = $1
 `
