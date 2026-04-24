@@ -346,6 +346,17 @@ INSERT INTO public.permissions (key, module, description) VALUES
     ('sales.contract.cancel', 'sales', 'Cancel sales contracts'),
     ('sales.transfer.request', 'sales', 'Request ownership transfers'),
     ('sales.transfer.approve', 'sales', 'Approve ownership transfers'),
+    ('sales.reservation.cancel', 'sales', 'Cancel reservations'),
+    ('sales.reservation.convert', 'sales', 'Convert reservations into contracts'),
+    ('sales.contract.edit', 'sales', 'Edit draft sales contracts'),
+    ('sales.contract.terminate', 'sales', 'Request or apply contract termination'),
+    ('sales.contract.complete', 'sales', 'Complete active sales contracts'),
+    ('sales.contract.mark_default', 'sales', 'Mark active sales contracts as defaulted'),
+    ('sales.schedule.generate', 'sales', 'Generate contract installment schedules'),
+    ('sales.schedule.edit', 'sales', 'Edit draft schedules or submit restructure requests'),
+    ('sales.ownership.transfer', 'sales', 'Request ownership transfers'),
+    ('sales.ownership.transfer.complete', 'sales', 'Complete ownership transfers'),
+    ('sales.payment_plan.create', 'sales', 'Create payment plan templates'),
     -- Rentals
     ('rentals.lease.create', 'rentals', 'Create lease contracts'),
     ('rentals.lease.activate', 'rentals', 'Activate lease contracts'),
@@ -395,28 +406,28 @@ WHERE r.code = 'business_entity_admin'
   AND p.key NOT IN ('admin.users.manage', 'admin.roles.assign')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- branch_manager: inventory.unit.*, sales.reservation.create, sales.contract.create, rentals.lease.create, finance.payment.create, finance.payment.post, sc.*, utility.*
+-- branch_manager: inventory.unit.*, sales.reservation.create, sales.reservation.cancel, sales.reservation.convert, sales.contract.create, sales.contract.edit, sales.schedule.generate, sales.schedule.edit, rentals.lease.create, finance.payment.create, finance.payment.post, sc.*, utility.*
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM public.roles r, public.permissions p
 WHERE r.code = 'branch_manager'
-  AND (p.key LIKE 'inventory.unit.%' OR p.key IN ('sales.reservation.create', 'sales.contract.create', 'rentals.lease.create', 'finance.payment.create', 'finance.payment.post') OR p.key LIKE 'sc.%' OR p.key LIKE 'utility.%')
+  AND (p.key LIKE 'inventory.unit.%' OR p.key IN ('sales.reservation.create', 'sales.reservation.cancel', 'sales.reservation.convert', 'sales.contract.create', 'sales.contract.edit', 'sales.schedule.generate', 'sales.schedule.edit', 'rentals.lease.create', 'finance.payment.create', 'finance.payment.post') OR p.key LIKE 'sc.%' OR p.key LIKE 'utility.%')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- sales_officer: inventory.unit.view, sales.reservation.create, sales.contract.create, sales.contract.activate, sales.transfer.request, finance.payment.create
+-- sales_officer: inventory.unit.view, sales.reservation.create, sales.reservation.cancel, sales.reservation.convert, sales.contract.create, sales.contract.edit, sales.contract.activate, sales.transfer.request, sales.ownership.transfer, sales.schedule.generate, sales.schedule.edit, sales.payment_plan.create, finance.payment.create
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM public.roles r, public.permissions p
 WHERE r.code = 'sales_officer'
-  AND p.key IN ('inventory.unit.view', 'sales.reservation.create', 'sales.contract.create', 'sales.contract.activate', 'sales.transfer.request', 'finance.payment.create')
+  AND p.key IN ('inventory.unit.view', 'sales.reservation.create', 'sales.reservation.cancel', 'sales.reservation.convert', 'sales.contract.create', 'sales.contract.edit', 'sales.contract.activate', 'sales.transfer.request', 'sales.ownership.transfer', 'sales.schedule.generate', 'sales.schedule.edit', 'sales.payment_plan.create', 'finance.payment.create')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- sales_approver: inventory.unit.view, sales.transfer.approve, sales.contract.cancel, approvals.request.decide
+-- sales_approver: inventory.unit.view, sales.transfer.approve, sales.ownership.transfer.complete, sales.contract.cancel, sales.contract.terminate, approvals.request.decide
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM public.roles r, public.permissions p
 WHERE r.code = 'sales_approver'
-  AND p.key IN ('inventory.unit.view', 'sales.transfer.approve', 'sales.contract.cancel', 'approvals.request.decide')
+  AND p.key IN ('inventory.unit.view', 'sales.transfer.approve', 'sales.ownership.transfer.complete', 'sales.contract.cancel', 'sales.contract.terminate', 'approvals.request.decide')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- leasing_officer: inventory.unit.view, rentals.lease.create, rentals.lease.activate, finance.payment.create
@@ -443,20 +454,20 @@ WHERE r.code = 'cashier'
   AND p.key IN ('inventory.unit.view', 'finance.payment.create', 'finance.payment.post')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- finance_officer: inventory.unit.view, finance.payment.create, finance.payment.post, finance.receivable.manual, finance.adjustment.create, finance.credit.apply
+-- finance_officer: inventory.unit.view, sales.contract.complete, finance.payment.create, finance.payment.post, finance.receivable.manual, finance.adjustment.create, finance.credit.apply
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM public.roles r, public.permissions p
 WHERE r.code = 'finance_officer'
-  AND p.key IN ('inventory.unit.view', 'finance.payment.create', 'finance.payment.post', 'finance.receivable.manual', 'finance.adjustment.create', 'finance.credit.apply')
+  AND p.key IN ('inventory.unit.view', 'sales.contract.complete', 'finance.payment.create', 'finance.payment.post', 'finance.receivable.manual', 'finance.adjustment.create', 'finance.credit.apply')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- finance_approver: inventory.unit.view, finance.payment.void, finance.adjustment.approve, approvals.request.decide
+-- finance_approver: inventory.unit.view, sales.contract.mark_default, finance.payment.void, finance.adjustment.approve, approvals.request.decide
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM public.roles r, public.permissions p
 WHERE r.code = 'finance_approver'
-  AND p.key IN ('inventory.unit.view', 'finance.payment.void', 'finance.adjustment.approve', 'approvals.request.decide')
+  AND p.key IN ('inventory.unit.view', 'sales.contract.mark_default', 'finance.payment.void', 'finance.adjustment.approve', 'approvals.request.decide')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- property_service_manager: inventory.unit.view, sc.*, utility.*

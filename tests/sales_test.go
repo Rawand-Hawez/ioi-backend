@@ -23,6 +23,49 @@ func TestSalesPhase7Harness(t *testing.T) {
 	require.NotEmpty(t, testToken)
 }
 
+func TestSalesWriteRoutesRequirePermissions(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Permission Buyer")
+	reservationID := createSalesTestReservation(t, unitID, buyerID, "active")
+	contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+	lineID := createSalesTestScheduleLine(t, contractID, "2026-05-01", "1000.00", "scheduled")
+
+	restrictedToken := createRestrictedTestToken(t)
+
+	cases := []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{"POST", "/api/v1/reservations", map[string]any{"unit_id": unitID, "customer_party_id": buyerID}},
+		{"POST", "/api/v1/reservations/" + reservationID + "/convert", map[string]any{}},
+		{"POST", "/api/v1/reservations/" + reservationID + "/cancel", map[string]any{"reason": "test"}},
+		{"POST", "/api/v1/sales-contracts", map[string]any{"unit_id": unitID, "primary_buyer_id": buyerID}},
+		{"PATCH", "/api/v1/sales-contracts/" + contractID, map[string]any{"discount_amount": "1.00"}},
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/activate", map[string]any{}},
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/cancel", map[string]any{"reason": "test"}},
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/complete", map[string]any{}},
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/terminate", map[string]any{"reason": "test"}},
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/mark-default", map[string]any{"reason": "test"}},
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/schedule/generate", map[string]any{}},
+		{"PATCH", "/api/v1/schedule-lines/" + lineID, map[string]any{"due_date": "2026-06-01"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			rr := salesRequestWithToken(t, restrictedToken, tc.method, tc.path, tc.body)
+			require.Equal(t, http.StatusForbidden, rr.Code)
+		})
+	}
+}
+
+func createRestrictedTestToken(t *testing.T) string {
+	t.Helper()
+
+	_, token := CreateSecondTestUser(t)
+	return token
+}
+
 func createSalesTestParty(t *testing.T, name string) string {
 	t.Helper()
 
@@ -80,6 +123,7 @@ func createSalesTestReservation(t *testing.T, unitID string, partyID string, sta
 		"expires_at":         time.Now().Add(48 * time.Hour).UTC().Format(time.RFC3339),
 		"deposit_amount":     "0.00",
 		"deposit_currency":   "USD",
+		"discount_amount":    "0.00",
 	}
 
 	rr := salesRequest(t, http.MethodPost, "/api/v1/reservations", body)

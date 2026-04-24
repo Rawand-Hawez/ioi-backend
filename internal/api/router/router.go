@@ -129,12 +129,52 @@ func SetupRoutes(app *fiber.App) {
 	approvalRequests := api.Group("/approval-requests", middleware.RequireAuth(), middleware.InjectGUCVariables())
 	approvalRequests.Get("/", handlers.ListApprovalRequests)
 	approvalRequests.Get("/:id", handlers.GetApprovalRequest)
-	approvalRequests.Post("/", handlers.CreateApprovalRequest)
+	approvalRequests.Post("/", middleware.RequirePermission("approvals.policy.manage"), handlers.CreateApprovalRequest)
 	approvalRequests.Post("/:id/decide", middleware.RequirePermission("approvals.request.decide"), handlers.DecideApprovalRequest)
 	approvalRequests.Post("/:id/cancel", handlers.CancelApprovalRequest)
+
+	// Approval Request Approver routes
+	approvalRequestApprovers := api.Group("/approval-request-approvers", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	approvalRequestApprovers.Post("/", middleware.RequirePermission("approvals.policy.manage"), handlers.AddApprovalRequestApprover)
 
 	// Audit Log routes
 	auditLogs := api.Group("/audit-logs", middleware.RequireAuth(), middleware.InjectGUCVariables())
 	auditLogs.Get("/", middleware.RequirePermission("audit.log.view"), handlers.ListAuditLogs)
 	auditLogs.Get("/:entity_type/:entity_id", middleware.RequirePermission("audit.log.view"), handlers.GetAuditLogsForEntity)
+
+	// Reservation routes
+	reservations := api.Group("/reservations", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	reservations.Get("/", handlers.ListReservations)
+	reservations.Get("/:id", handlers.GetReservation)
+	reservations.Post("/", middleware.RequirePermission("sales.reservation.create"), handlers.CreateReservation)
+	reservations.Post("/:id/convert", middleware.RequirePermission("sales.reservation.convert"), handlers.ConvertReservation)
+	reservations.Post("/:id/cancel", middleware.RequirePermission("sales.reservation.cancel"), handlers.CancelReservation)
+
+	// Sales Contracts routes
+	salesContracts := api.Group("/sales-contracts", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	salesContracts.Get("/", handlers.ListSalesContracts)
+	salesContracts.Get("/:id", handlers.GetSalesContract)
+	salesContracts.Post("/", middleware.RequirePermission("sales.contract.create"), handlers.CreateSalesContract)
+	salesContracts.Patch("/:id", middleware.RequirePermission("sales.contract.edit"), handlers.UpdateSalesContract)
+	salesContracts.Post("/:id/activate", middleware.RequirePermission("sales.contract.activate"), handlers.ActivateSalesContract)
+	salesContracts.Post("/:id/cancel", middleware.RequirePermission("sales.contract.cancel"), handlers.CancelSalesContract)
+	salesContracts.Post("/:id/complete", middleware.RequirePermission("sales.contract.complete"), handlers.CompleteSalesContract)
+	salesContracts.Post("/:id/terminate", middleware.RequirePermission("sales.contract.terminate"), handlers.TerminateSalesContract)
+	salesContracts.Post("/:id/mark-default", middleware.RequirePermission("sales.contract.mark_default"), handlers.MarkSalesContractDefaulted)
+	salesContracts.Post("/:id/transfer-request", middleware.RequirePermission("sales.transfer.request"), handlers.RequestOwnershipTransfer)
+	salesContracts.Get("/:id/schedule", handlers.ListInstallmentScheduleLines)
+	salesContracts.Post("/:id/schedule/generate", middleware.RequirePermission("sales.schedule.generate"), handlers.GenerateSalesContractSchedule)
+
+	scheduleLines := api.Group("/schedule-lines", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	scheduleLines.Patch("/:id", middleware.RequirePermission("sales.schedule.edit"), handlers.UpdateInstallmentScheduleLine)
+
+	// Ownership Transfer routes
+	ownershipTransfers := api.Group("/ownership-transfers", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	ownershipTransfers.Get("/:id", handlers.GetOwnershipTransfer)
+	ownershipTransfers.Post("/:id/complete", middleware.RequirePermission("sales.ownership.transfer.complete"), handlers.CompleteOwnershipTransfer)
+
+	// Payment Plan Templates routes
+	paymentPlanTemplates := api.Group("/payment-plan-templates", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	paymentPlanTemplates.Get("/", handlers.ListPaymentPlanTemplates)
+	paymentPlanTemplates.Post("/", middleware.RequirePermission("sales.payment_plan.create"), handlers.CreatePaymentPlanTemplate)
 }
