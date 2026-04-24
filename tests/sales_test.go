@@ -420,6 +420,108 @@ func TestActivateSalesContractRejectsSecondActiveContractForUnit(t *testing.T) {
 	require.Equal(t, http.StatusConflict, secondRR.Code, secondRR.Body.String())
 }
 
+func TestCancelActiveSalesContractCreatesApprovalAndDoesNotMutateImmediately(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Active Cancel Request Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "active")
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/cancel", map[string]any{"reason": "request"})
+	require.Equal(t, http.StatusAccepted, rr.Code, rr.Body.String())
+
+	body := decodeSalesTestObject(t, rr.Body)
+	approvalID, _ := body["approval_request_id"].(string)
+	require.NotEmpty(t, approvalID, "response must include approval_request_id")
+
+	contract := getSalesTestContract(t, contractID)
+	require.Equal(t, "active", contract["status"], "contract must not mutate before approval")
+
+	require.Equal(t, "pending", getSalesTestApprovalRequestStatus(t, approvalID))
+	require.Equal(t, 1, countSalesTestApprovalsForContract(t, contractID, "contract_cancellation"))
+}
+
+func TestCancelActiveSalesContractAppliesAfterApproval(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Active Cancel Apply Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "active")
+
+	firstRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/cancel", map[string]any{"reason": "request"})
+	require.Equal(t, http.StatusAccepted, firstRR.Code, firstRR.Body.String())
+	firstBody := decodeSalesTestObject(t, firstRR.Body)
+	approvalID, _ := firstBody["approval_request_id"].(string)
+	require.NotEmpty(t, approvalID)
+
+	approveSalesTestApprovalRequest(t, approvalID)
+
+	applyRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/cancel", map[string]any{})
+	require.Equal(t, http.StatusOK, applyRR.Code, applyRR.Body.String())
+
+	applyBody := decodeSalesTestObject(t, applyRR.Body)
+	contract, _ := applyBody["contract"].(map[string]any)
+	require.Equal(t, "cancelled", contract["status"])
+
+	stored := getSalesTestContract(t, contractID)
+	require.Equal(t, "cancelled", stored["status"])
+}
+
+func TestTerminateSalesContractCreatesApprovalAndAppliesAfterApproval(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Terminate Apply Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "active")
+
+	firstRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/terminate", map[string]any{"reason": "request"})
+	require.Equal(t, http.StatusAccepted, firstRR.Code, firstRR.Body.String())
+	firstBody := decodeSalesTestObject(t, firstRR.Body)
+	approvalID, _ := firstBody["approval_request_id"].(string)
+	require.NotEmpty(t, approvalID, "response must include approval_request_id")
+
+	require.Equal(t, "active", getSalesTestContract(t, contractID)["status"], "contract must not mutate before approval")
+
+	approveSalesTestApprovalRequest(t, approvalID)
+
+	applyRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/terminate", map[string]any{})
+	require.Equal(t, http.StatusOK, applyRR.Code, applyRR.Body.String())
+
+	applyBody := decodeSalesTestObject(t, applyRR.Body)
+	contract, _ := applyBody["contract"].(map[string]any)
+	require.Equal(t, "terminated", contract["status"])
+
+	require.Equal(t, "terminated", getSalesTestContract(t, contractID)["status"])
+}
+
+func TestCancelOrTerminateDoesNotCreateDuplicatePendingApprovals(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	cancelBuyerID := createSalesTestParty(t, "Cancel Dup Buyer")
+	cancelContractID := createSalesTestContract(t, unitID, cancelBuyerID, "active")
+
+	firstCancel := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+cancelContractID+"/cancel", map[string]any{"reason": "first"})
+	require.Equal(t, http.StatusAccepted, firstCancel.Code, firstCancel.Body.String())
+	firstID, _ := decodeSalesTestObject(t, firstCancel.Body)["approval_request_id"].(string)
+	require.NotEmpty(t, firstID)
+
+	secondCancel := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+cancelContractID+"/cancel", map[string]any{"reason": "second"})
+	require.Equal(t, http.StatusAccepted, secondCancel.Code, secondCancel.Body.String())
+	secondID, _ := decodeSalesTestObject(t, secondCancel.Body)["approval_request_id"].(string)
+	require.Equal(t, firstID, secondID, "duplicate cancel must reuse pending approval")
+
+	require.Equal(t, 1, countSalesTestApprovalsForContract(t, cancelContractID, "contract_cancellation"))
+
+	unitID2 := createSalesTestUnit(t)
+	terminateBuyerID := createSalesTestParty(t, "Terminate Dup Buyer")
+	terminateContractID := createSalesTestContract(t, unitID2, terminateBuyerID, "active")
+
+	firstTerm := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+terminateContractID+"/terminate", map[string]any{"reason": "first"})
+	require.Equal(t, http.StatusAccepted, firstTerm.Code, firstTerm.Body.String())
+	firstTermID, _ := decodeSalesTestObject(t, firstTerm.Body)["approval_request_id"].(string)
+	require.NotEmpty(t, firstTermID)
+
+	secondTerm := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+terminateContractID+"/terminate", map[string]any{"reason": "second"})
+	require.Equal(t, http.StatusAccepted, secondTerm.Code, secondTerm.Body.String())
+	secondTermID, _ := decodeSalesTestObject(t, secondTerm.Body)["approval_request_id"].(string)
+	require.Equal(t, firstTermID, secondTermID, "duplicate terminate must reuse pending approval")
+
+	require.Equal(t, 1, countSalesTestApprovalsForContract(t, terminateContractID, "contract_termination"))
+}
+
 func createRestrictedTestToken(t *testing.T) string {
 	t.Helper()
 
@@ -898,6 +1000,73 @@ func setSalesTestStatus(t *testing.T, table string, id string, status string) {
 		return err
 	})
 	require.NoError(t, err)
+}
+
+func getSalesTestContract(t *testing.T, contractID string) map[string]any {
+	t.Helper()
+
+	rr := salesRequest(t, http.MethodGet, "/api/v1/sales-contracts/"+contractID, nil)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var contract map[string]any
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&contract))
+	return contract
+}
+
+func approveSalesTestApprovalRequest(t *testing.T, approvalRequestID string) {
+	t.Helper()
+
+	approvalUUID := uuid.MustParse(approvalRequestID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(), `
+			UPDATE approval_requests
+			SET status = 'approved',
+			    decided_at = timezone('utc', now()),
+			    updated_at = timezone('utc', now())
+			WHERE id = $1
+		`, approvalUUID)
+		return err
+	})
+	require.NoError(t, err)
+}
+
+func getSalesTestApprovalRequestStatus(t *testing.T, approvalRequestID string) string {
+	t.Helper()
+
+	approvalUUID := uuid.MustParse(approvalRequestID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	var status string
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `SELECT status FROM approval_requests WHERE id = $1`, approvalUUID).Scan(&status)
+	})
+	require.NoError(t, err)
+	return status
+}
+
+func countSalesTestApprovalsForContract(t *testing.T, contractID string, requestType string) int {
+	t.Helper()
+
+	contractUUID := uuid.MustParse(contractID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	var count int
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `
+			SELECT count(*) FROM approval_requests
+			WHERE module = 'sales'
+			  AND source_record_type = 'sales_contract'
+			  AND source_record_id = $1
+			  AND request_type = $2
+		`, contractUUID, requestType).Scan(&count)
+	})
+	require.NoError(t, err)
+	return count
 }
 
 func expireSalesTestReservation(t *testing.T, reservationID string) {

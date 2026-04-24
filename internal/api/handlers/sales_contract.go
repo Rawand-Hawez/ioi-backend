@@ -962,6 +962,129 @@ func ActivateSalesContract(c *fiber.Ctx) error {
 	})
 }
 
+type approvalGatedOutcome struct {
+	Action            string
+	ApprovalRequestID pgtype.UUID
+	Contract          db.SalesContract
+}
+
+func handleSalesContractApprovalGate(
+	ctx context.Context,
+	q *db.Queries,
+	contract db.SalesContract,
+	requestType string,
+	targetStatus string,
+	actionLabel string,
+	requestedByUserID uuid.UUID,
+	reason *string,
+) (approvalGatedOutcome, error) {
+	out := approvalGatedOutcome{Contract: contract}
+
+	latest, lerr := q.GetLatestSalesApprovalRequest(ctx, db.GetLatestSalesApprovalRequestParams{
+		SourceRecordType: "sales_contract",
+		SourceRecordID:   contract.ID,
+		RequestType:      requestType,
+	})
+	if lerr != nil && !errors.Is(lerr, pgx.ErrNoRows) {
+		return out, lerr
+	}
+
+	if lerr == nil {
+		switch latest.Status {
+		case "approved":
+			updated, err := q.UpdateSalesContractStatus(ctx, db.UpdateSalesContractStatusParams{
+				ID:       contract.ID,
+				Status:   targetStatus,
+				Status_2: "active",
+			})
+			if err != nil {
+				return out, err
+			}
+			beforeSnapshot, _ := json.Marshal(contract)
+			afterSnapshot, _ := json.Marshal(updated)
+			if _, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+				EventTime:                pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:                   toPgUUID(requestedByUserID),
+				Module:                   "sales",
+				ActionType:               fmt.Sprintf("apply_contract_%s", actionLabel),
+				EntityType:               "sales_contract",
+				EntityID:                 contract.ID,
+				ScopeType:                "project",
+				ScopeID:                  contract.ProjectID,
+				ResultStatus:             "success",
+				SummaryText:              fmt.Sprintf("Applied approved contract %s", actionLabel),
+				BeforeSnapshotJson:       beforeSnapshot,
+				AfterSnapshotJson:        afterSnapshot,
+				RelatedApprovalRequestID: latest.ID,
+			}); err != nil {
+				return out, err
+			}
+			out.Action = "applied"
+			out.ApprovalRequestID = latest.ID
+			out.Contract = updated
+			return out, nil
+		case "pending":
+			out.Action = "pending_existing"
+			out.ApprovalRequestID = latest.ID
+			return out, nil
+		case "rejected":
+			out.Action = "rejected"
+			out.ApprovalRequestID = latest.ID
+			return out, nil
+		}
+	}
+
+	payload := []byte("{}")
+	if reason != nil {
+		if b, err := json.Marshal(map[string]string{"reason": *reason}); err == nil {
+			payload = b
+		}
+	}
+	created, err := q.CreateApprovalRequest(ctx, db.CreateApprovalRequestParams{
+		BusinessEntityID:    contract.BusinessEntityID,
+		BranchID:            contract.BranchID,
+		Module:              "sales",
+		RequestType:         requestType,
+		SourceRecordType:    "sales_contract",
+		SourceRecordID:      contract.ID,
+		RequestedByUserID:   toPgUUID(requestedByUserID),
+		Status:              "pending",
+		PayloadSnapshotJson: payload,
+	})
+	if err != nil {
+		return out, err
+	}
+
+	afterSnapshot, _ := json.Marshal(contract)
+	if _, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+		EventTime:                pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		UserID:                   toPgUUID(requestedByUserID),
+		Module:                   "sales",
+		ActionType:               fmt.Sprintf("request_contract_%s", actionLabel),
+		EntityType:               "sales_contract",
+		EntityID:                 contract.ID,
+		ScopeType:                "project",
+		ScopeID:                  contract.ProjectID,
+		ResultStatus:             "success",
+		SummaryText:              fmt.Sprintf("Requested approval for contract %s", actionLabel),
+		AfterSnapshotJson:        afterSnapshot,
+		RelatedApprovalRequestID: created.ID,
+	}); err != nil {
+		return out, err
+	}
+
+	out.Action = "pending_new"
+	out.ApprovalRequestID = created.ID
+	return out, nil
+}
+
+func formatApprovalRequestUUID(id pgtype.UUID) string {
+	if !id.Valid {
+		return ""
+	}
+	return uuid.UUID(id.Bytes).String()
+}
+
 func CancelSalesContract(c *fiber.Ctx) error {
 	claims := middleware.GetClaims(c)
 	if claims == nil {
@@ -997,7 +1120,7 @@ func CancelSalesContract(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), dbTimeout)
 	defer cancel()
 
-	var contract db.SalesContract
+	var outcome approvalGatedOutcome
 
 	err = p.WithTx(ctx, claims, func(tx pgx.Tx) error {
 		q := db.New(tx)
@@ -1008,27 +1131,24 @@ func CancelSalesContract(c *fiber.Ctx) error {
 		}
 
 		if existing.Status == "draft" {
-			statusParams := db.UpdateSalesContractStatusParams{
+			updated, err := q.UpdateSalesContractStatus(ctx, db.UpdateSalesContractStatusParams{
 				ID:       toPgUUID(id),
 				Status:   "cancelled",
 				Status_2: "draft",
-			}
-			contract, err = q.UpdateSalesContractStatus(ctx, statusParams)
+			})
 			if err != nil {
 				return err
 			}
 
-			updateUnitParams := db.UpdateUnitParams{
+			if _, err := q.UpdateUnit(ctx, db.UpdateUnitParams{
 				ID:          existing.UnitID,
 				SalesStatus: toPgText(strPtr("available")),
-			}
-			_, err = q.UpdateUnit(ctx, updateUnitParams)
-			if err != nil {
+			}); err != nil {
 				return err
 			}
 
-			afterSnapshot, _ := json.Marshal(contract)
-			auditParams := db.InsertAuditLogParams{
+			afterSnapshot, _ := json.Marshal(updated)
+			if _, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
 				EventTime:         pgtype.Timestamptz{Time: time.Now(), Valid: true},
 				UserID:            toPgUUID(userID),
 				Module:            "sales",
@@ -1040,60 +1160,27 @@ func CancelSalesContract(c *fiber.Ctx) error {
 				ResultStatus:      "success",
 				SummaryText:       "Cancelled draft sales contract",
 				AfterSnapshotJson: afterSnapshot,
+			}); err != nil {
+				return err
 			}
-			_, err = q.InsertAuditLog(ctx, auditParams)
-			return err
+
+			outcome = approvalGatedOutcome{Action: "applied", Contract: updated}
+			return nil
 		}
 
 		if existing.Status == "active" {
-			approvalReqParams := db.CreateApprovalRequestParams{
-				BusinessEntityID:    existing.BusinessEntityID,
-				BranchID:            existing.BranchID,
-				Module:              "sales",
-				RequestType:         "contract_cancellation",
-				SourceRecordType:    "sales_contract",
-				SourceRecordID:      toPgUUID(id),
-				RequestedByUserID:   toPgUUID(userID),
-				Status:              "pending",
-				PayloadSnapshotJson: []byte(fmt.Sprintf(`{"reason": "%s"}`, ptrToString(req.Reason))),
-			}
-			_, err = q.CreateApprovalRequest(ctx, approvalReqParams)
+			o, err := handleSalesContractApprovalGate(ctx, q, existing, "contract_cancellation", "cancelled", "cancellation", userID, req.Reason)
 			if err != nil {
 				return err
 			}
-
-			afterSnapshot, _ := json.Marshal(existing)
-			auditParams := db.InsertAuditLogParams{
-				EventTime:         pgtype.Timestamptz{Time: time.Now(), Valid: true},
-				UserID:            toPgUUID(userID),
-				Module:            "sales",
-				ActionType:        "request_contract_cancellation",
-				EntityType:        "sales_contract",
-				EntityID:          toPgUUID(id),
-				ScopeType:         "project",
-				ScopeID:           existing.ProjectID,
-				ResultStatus:      "success",
-				SummaryText:       "Requested approval for contract cancellation",
-				AfterSnapshotJson: afterSnapshot,
-			}
-			_, err = q.InsertAuditLog(ctx, auditParams)
-			if err != nil {
-				return err
-			}
-
-			return errors.New("approval_required")
+			outcome = o
+			return nil
 		}
 
 		return errors.New("invalid contract status for cancellation")
 	})
 
 	if err != nil {
-		if err.Error() == "approval_required" {
-			return c.Status(202).JSON(fiber.Map{
-				"message":     "cancellation request submitted for approval",
-				"contract_id": id,
-			})
-		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
@@ -1104,10 +1191,31 @@ func CancelSalesContract(c *fiber.Ctx) error {
 		return c.Status(500).JSON(fiber.Map{"error": "failed to cancel sales contract"})
 	}
 
-	return c.JSON(fiber.Map{
-		"message":  "sales contract cancelled",
-		"contract": contract,
-	})
+	switch outcome.Action {
+	case "applied":
+		resp := fiber.Map{
+			"message":  "sales contract cancelled",
+			"contract": outcome.Contract,
+		}
+		if outcome.ApprovalRequestID.Valid {
+			resp["approval_request_id"] = formatApprovalRequestUUID(outcome.ApprovalRequestID)
+		}
+		return c.JSON(resp)
+	case "pending_new", "pending_existing":
+		return c.Status(202).JSON(fiber.Map{
+			"message":             "cancellation request submitted for approval",
+			"contract_id":         id,
+			"approval_request_id": formatApprovalRequestUUID(outcome.ApprovalRequestID),
+		})
+	case "rejected":
+		return c.Status(409).JSON(fiber.Map{
+			"error":               "latest cancellation request was rejected",
+			"approval_request_id": formatApprovalRequestUUID(outcome.ApprovalRequestID),
+		})
+	default:
+		log.Printf("unexpected cancel outcome: %q", outcome.Action)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to cancel sales contract"})
+	}
 }
 
 func TerminateSalesContract(c *fiber.Ctx) error {
@@ -1145,12 +1253,12 @@ func TerminateSalesContract(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(c.Context(), dbTimeout)
 	defer cancel()
 
-	var existing db.SalesContract
+	var outcome approvalGatedOutcome
 
 	err = p.WithTx(ctx, claims, func(tx pgx.Tx) error {
 		q := db.New(tx)
 
-		existing, err = q.GetSalesContract(ctx, toPgUUID(id))
+		existing, err := q.GetSalesContract(ctx, toPgUUID(id))
 		if err != nil {
 			return err
 		}
@@ -1159,38 +1267,12 @@ func TerminateSalesContract(c *fiber.Ctx) error {
 			return errors.New("can only terminate active contracts")
 		}
 
-		approvalReqParams := db.CreateApprovalRequestParams{
-			BusinessEntityID:    existing.BusinessEntityID,
-			BranchID:            existing.BranchID,
-			Module:              "sales",
-			RequestType:         "contract_termination",
-			SourceRecordType:    "sales_contract",
-			SourceRecordID:      toPgUUID(id),
-			RequestedByUserID:   toPgUUID(userID),
-			Status:              "pending",
-			PayloadSnapshotJson: []byte(fmt.Sprintf(`{"reason": "%s"}`, ptrToString(req.Reason))),
-		}
-		_, err = q.CreateApprovalRequest(ctx, approvalReqParams)
+		o, err := handleSalesContractApprovalGate(ctx, q, existing, "contract_termination", "terminated", "termination", userID, req.Reason)
 		if err != nil {
 			return err
 		}
-
-		afterSnapshot, _ := json.Marshal(existing)
-		auditParams := db.InsertAuditLogParams{
-			EventTime:         pgtype.Timestamptz{Time: time.Now(), Valid: true},
-			UserID:            toPgUUID(userID),
-			Module:            "sales",
-			ActionType:        "request_contract_termination",
-			EntityType:        "sales_contract",
-			EntityID:          toPgUUID(id),
-			ScopeType:         "project",
-			ScopeID:           existing.ProjectID,
-			ResultStatus:      "success",
-			SummaryText:       "Requested approval for contract termination",
-			AfterSnapshotJson: afterSnapshot,
-		}
-		_, err = q.InsertAuditLog(ctx, auditParams)
-		return err
+		outcome = o
+		return nil
 	})
 
 	if err != nil {
@@ -1201,13 +1283,31 @@ func TerminateSalesContract(c *fiber.Ctx) error {
 			return c.Status(409).JSON(fiber.Map{"error": "can only terminate active contracts"})
 		}
 		log.Printf("Database error: %v", err)
-		return c.Status(500).JSON(fiber.Map{"error": "failed to request contract termination"})
+		return c.Status(500).JSON(fiber.Map{"error": "failed to terminate sales contract"})
 	}
 
-	return c.Status(202).JSON(fiber.Map{
-		"message":     "termination request submitted for approval",
-		"contract_id": id,
-	})
+	switch outcome.Action {
+	case "applied":
+		return c.JSON(fiber.Map{
+			"message":             "sales contract terminated",
+			"contract":            outcome.Contract,
+			"approval_request_id": formatApprovalRequestUUID(outcome.ApprovalRequestID),
+		})
+	case "pending_new", "pending_existing":
+		return c.Status(202).JSON(fiber.Map{
+			"message":             "termination request submitted for approval",
+			"contract_id":         id,
+			"approval_request_id": formatApprovalRequestUUID(outcome.ApprovalRequestID),
+		})
+	case "rejected":
+		return c.Status(409).JSON(fiber.Map{
+			"error":               "latest termination request was rejected",
+			"approval_request_id": formatApprovalRequestUUID(outcome.ApprovalRequestID),
+		})
+	default:
+		log.Printf("unexpected terminate outcome: %q", outcome.Action)
+		return c.Status(500).JSON(fiber.Map{"error": "failed to terminate sales contract"})
+	}
 }
 
 func CompleteSalesContract(c *fiber.Ctx) error {
