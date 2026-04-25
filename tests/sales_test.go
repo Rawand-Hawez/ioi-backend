@@ -615,6 +615,120 @@ func TestUpdatePostedScheduleLineIsRejected(t *testing.T) {
 	require.Equal(t, http.StatusConflict, rr.Code, rr.Body.String())
 }
 
+func TestRequestOwnershipTransferRequiresActiveFromParty(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Original Owner Active")
+	contractID := createSalesTestContract(t, unitID, buyerID, "active")
+
+	randomPartyID := createSalesTestParty(t, "Random Not Buyer")
+	newBuyerID := createSalesTestParty(t, "Transfer Target")
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/transfer-request", map[string]any{
+		"transfer_type":       "buyer_replacement",
+		"from_party_id":       randomPartyID,
+		"to_party_id":         newBuyerID,
+		"effective_date":      "2026-05-01",
+		"financial_treatment": "no_change",
+	})
+	require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+}
+
+func TestRequestOwnershipTransferCreatesApprovalLinkedToTransfer(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Linked Original Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "active")
+
+	newBuyerID := createSalesTestParty(t, "Linked Target Buyer")
+
+	rr := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/transfer-request", map[string]any{
+		"transfer_type":       "buyer_replacement",
+		"from_party_id":       buyerID,
+		"to_party_id":         newBuyerID,
+		"effective_date":      "2026-05-01",
+		"financial_treatment": "no_change",
+	})
+	require.Equal(t, http.StatusCreated, rr.Code, rr.Body.String())
+
+	body := decodeSalesTestObject(t, rr.Body)
+	transferID, _ := body["id"].(string)
+	approvalID, _ := body["approval_request_id"].(string)
+	require.NotEmpty(t, transferID)
+	require.NotEmpty(t, approvalID)
+
+	approval := getSalesTestApprovalRequest(t, approvalID)
+	require.Equal(t, "ownership_transfer", approval["source_record_type"])
+	require.Equal(t, transferID, approval["source_record_id"])
+	require.Equal(t, "pending", approval["status"])
+}
+
+func TestCompleteOwnershipTransferRejectsUnapprovedTransfer(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Unapproved From Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "active")
+	newBuyerID := createSalesTestParty(t, "Unapproved To Buyer")
+
+	requestRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/transfer-request", map[string]any{
+		"transfer_type":       "buyer_replacement",
+		"from_party_id":       buyerID,
+		"to_party_id":         newBuyerID,
+		"effective_date":      "2026-05-01",
+		"financial_treatment": "no_change",
+	})
+	require.Equal(t, http.StatusCreated, requestRR.Code, requestRR.Body.String())
+	transferID, _ := decodeSalesTestObject(t, requestRR.Body)["id"].(string)
+
+	completeRR := salesRequest(t, http.MethodPost, "/api/v1/ownership-transfers/"+transferID+"/complete", map[string]any{})
+	require.Equal(t, http.StatusBadRequest, completeRR.Code, completeRR.Body.String())
+}
+
+func TestCompleteOwnershipTransferUpdatesBuyerHistoryAndUnitOwnership(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "From Buyer Side Effects")
+	contractID := createSalesTestContract(t, unitID, buyerID, "active")
+	newBuyerID := createSalesTestParty(t, "To Buyer Side Effects")
+	createSalesTestUnitOwnership(t, unitID, buyerID, "100.00")
+
+	requestRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/transfer-request", map[string]any{
+		"transfer_type":       "buyer_replacement",
+		"from_party_id":       buyerID,
+		"to_party_id":         newBuyerID,
+		"effective_date":      "2026-05-01",
+		"financial_treatment": "no_change",
+	})
+	require.Equal(t, http.StatusCreated, requestRR.Code, requestRR.Body.String())
+	body := decodeSalesTestObject(t, requestRR.Body)
+	transferID, _ := body["id"].(string)
+	approvalID, _ := body["approval_request_id"].(string)
+	require.NotEmpty(t, transferID)
+	require.NotEmpty(t, approvalID)
+
+	approveSalesTestApprovalRequest(t, approvalID)
+
+	completeRR := salesRequest(t, http.MethodPost, "/api/v1/ownership-transfers/"+transferID+"/complete", map[string]any{})
+	require.Equal(t, http.StatusOK, completeRR.Code, completeRR.Body.String())
+
+	require.Equal(t, "completed", getSalesTestOwnershipTransfer(t, transferID)["status"])
+
+	contract := getSalesTestContract(t, contractID)
+	require.Equal(t, newBuyerID, contract["primary_buyer_id"])
+
+	oldParty := getSalesTestSalesContractParty(t, contractID, buyerID)
+	require.Equal(t, "inactive", oldParty["status"])
+	require.NotEmpty(t, oldParty["effective_to"])
+
+	newParty := getSalesTestSalesContractParty(t, contractID, newBuyerID)
+	require.Equal(t, "active", newParty["status"])
+	require.Empty(t, newParty["effective_to"])
+
+	oldOwnership := getSalesTestUnitOwnership(t, unitID, buyerID)
+	require.Equal(t, "inactive", oldOwnership["status"])
+	require.NotEmpty(t, oldOwnership["effective_to"])
+
+	newOwnership := getSalesTestUnitOwnership(t, unitID, newBuyerID)
+	require.Equal(t, "active", newOwnership["status"])
+	require.Empty(t, newOwnership["effective_to"])
+}
+
 func TestCancelOrTerminateDoesNotCreateDuplicatePendingApprovals(t *testing.T) {
 	unitID := createSalesTestUnit(t)
 	cancelBuyerID := createSalesTestParty(t, "Cancel Dup Buyer")
@@ -1244,6 +1358,155 @@ func getSalesTestReceivableOutstanding(t *testing.T, receivableID string) string
 	})
 	require.NoError(t, err)
 	return outstanding
+}
+
+func getSalesTestApprovalRequest(t *testing.T, approvalRequestID string) map[string]string {
+	t.Helper()
+
+	approvalUUID := uuid.MustParse(approvalRequestID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	row := map[string]string{}
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		var module, requestType, sourceRecordType, sourceRecordID, status string
+		if err := tx.QueryRow(context.Background(), `
+			SELECT module, request_type, source_record_type, source_record_id::text, status
+			FROM approval_requests
+			WHERE id = $1
+		`, approvalUUID).Scan(&module, &requestType, &sourceRecordType, &sourceRecordID, &status); err != nil {
+			return err
+		}
+		row = map[string]string{
+			"module":             module,
+			"request_type":       requestType,
+			"source_record_type": sourceRecordType,
+			"source_record_id":   sourceRecordID,
+			"status":             status,
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return row
+}
+
+func getSalesTestOwnershipTransfer(t *testing.T, transferID string) map[string]string {
+	t.Helper()
+
+	transferUUID := uuid.MustParse(transferID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	row := map[string]string{}
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		var status, fromPartyID, toPartyID, salesContractID string
+		var approvalRequestID *string
+		if err := tx.QueryRow(context.Background(), `
+			SELECT status, from_party_id::text, to_party_id::text, sales_contract_id::text, approval_request_id::text
+			FROM ownership_transfers
+			WHERE id = $1
+		`, transferUUID).Scan(&status, &fromPartyID, &toPartyID, &salesContractID, &approvalRequestID); err != nil {
+			return err
+		}
+		row = map[string]string{
+			"status":            status,
+			"from_party_id":     fromPartyID,
+			"to_party_id":       toPartyID,
+			"sales_contract_id": salesContractID,
+		}
+		if approvalRequestID != nil {
+			row["approval_request_id"] = *approvalRequestID
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return row
+}
+
+func getSalesTestSalesContractParty(t *testing.T, contractID string, partyID string) map[string]string {
+	t.Helper()
+
+	contractUUID := uuid.MustParse(contractID)
+	partyUUID := uuid.MustParse(partyID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	row := map[string]string{}
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		var status, role string
+		var effectiveTo *string
+		if err := tx.QueryRow(context.Background(), `
+			SELECT status, role, effective_to::text
+			FROM sales_contract_parties
+			WHERE sales_contract_id = $1 AND party_id = $2
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, contractUUID, partyUUID).Scan(&status, &role, &effectiveTo); err != nil {
+			return err
+		}
+		row = map[string]string{"status": status, "role": role}
+		if effectiveTo != nil {
+			row["effective_to"] = *effectiveTo
+		} else {
+			row["effective_to"] = ""
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return row
+}
+
+func createSalesTestUnitOwnership(t *testing.T, unitID string, partyID string, sharePercentage string) string {
+	t.Helper()
+
+	unitUUID := uuid.MustParse(unitID)
+	partyUUID := uuid.MustParse(partyID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	var ownershipID string
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `
+			INSERT INTO unit_ownerships (unit_id, party_id, share_percentage, effective_from, status)
+			VALUES ($1, $2, $3::numeric, now()::date, 'active')
+			RETURNING id::text
+		`, unitUUID, partyUUID, sharePercentage).Scan(&ownershipID)
+	})
+	require.NoError(t, err)
+	return ownershipID
+}
+
+func getSalesTestUnitOwnership(t *testing.T, unitID string, partyID string) map[string]string {
+	t.Helper()
+
+	unitUUID := uuid.MustParse(unitID)
+	partyUUID := uuid.MustParse(partyID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	row := map[string]string{}
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		var status, sharePercentage string
+		var effectiveTo *string
+		if err := tx.QueryRow(context.Background(), `
+			SELECT status, share_percentage::text, effective_to::text
+			FROM unit_ownerships
+			WHERE unit_id = $1 AND party_id = $2
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, unitUUID, partyUUID).Scan(&status, &sharePercentage, &effectiveTo); err != nil {
+			return err
+		}
+		row = map[string]string{"status": status, "share_percentage": sharePercentage}
+		if effectiveTo != nil {
+			row["effective_to"] = *effectiveTo
+		} else {
+			row["effective_to"] = ""
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	return row
 }
 
 func expireSalesTestReservation(t *testing.T, reservationID string) {
