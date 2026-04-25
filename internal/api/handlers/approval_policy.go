@@ -196,9 +196,9 @@ func CreateApprovalPolicy(c *fiber.Ctx) error {
 
 	validRequestTypes := map[string]bool{
 		"ownership_transfer": true, "payment_void": true, "deposit_refund": true,
-		"contract_cancellation": true, "schedule_restructure": true,
-		"financial_adjustment": true, "lease_termination": true,
-		"manual_override": true, "prepaid_adjustment": true,
+		"contract_cancellation": true, "contract_termination": true,
+		"schedule_restructure": true, "financial_adjustment": true,
+		"lease_termination": true, "manual_override": true, "prepaid_adjustment": true,
 	}
 	if !validRequestTypes[req.RequestType] {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid request_type"})

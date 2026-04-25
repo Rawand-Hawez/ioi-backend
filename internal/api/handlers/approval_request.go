@@ -25,8 +25,20 @@ import (
 var (
 	ErrSelfApprovalBlocked = errors.New("self-approval is not allowed by policy")
 	ErrRequestNotPending   = errors.New("approval request is not in pending status")
-	ErrAlreadyDecided      = errors.New("you have already voted on this request")
+	ErrNotEligibleApprover = errors.New("you are not an eligible pending approver for this request, or you have already registered your decision")
 )
+
+var validModules = map[string]bool{
+	"sales": true, "finance": true, "rentals": true,
+	"service_charges": true, "utilities": true,
+}
+
+var validRequestTypes = map[string]bool{
+	"ownership_transfer": true, "payment_void": true, "deposit_refund": true,
+	"contract_cancellation": true, "contract_termination": true,
+	"schedule_restructure": true, "financial_adjustment": true,
+	"lease_termination": true, "manual_override": true, "prepaid_adjustment": true,
+}
 
 func ListApprovalRequests(c *fiber.Ctx) error {
 	claims := middleware.GetClaims(c)
@@ -237,6 +249,13 @@ func CreateApprovalRequest(c *fiber.Ctx) error {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid request body"})
 	}
 
+	if !validModules[req.Module] {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid module value"})
+	}
+	if !validRequestTypes[req.RequestType] {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid request_type value"})
+	}
+
 	businessEntityID, err := uuid.Parse(req.BusinessEntityID)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid business_entity_id"})
@@ -328,6 +347,7 @@ func CreateApprovalRequest(c *fiber.Ctx) error {
 
 		summaryBytes, _ := json.Marshal(fiber.Map{"request_type": req.RequestType, "module": req.Module})
 		_, err = q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+			UserID:            toPgUUID(requestedByUserID),
 			Module:            req.Module,
 			ActionType:        "approval_request_created",
 			EntityType:        "approval_request",
@@ -428,7 +448,7 @@ func DecideApprovalRequest(c *fiber.Ctx) error {
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrAlreadyDecided
+				return ErrNotEligibleApprover
 			}
 			return fmt.Errorf("record approver decision: %w", err)
 		}
@@ -447,11 +467,6 @@ func DecideApprovalRequest(c *fiber.Ctx) error {
 				return fmt.Errorf("count approved decisions: %w", err)
 			}
 
-			pendingCount, err := q.CountPendingApprovers(ctx, toPgUUID(id))
-			if err != nil {
-				return fmt.Errorf("count pending approvers: %w", err)
-			}
-
 			minApprovers := int64(1)
 			if request.ApprovalPolicyID.Valid {
 				policy, err := q.GetApprovalPolicy(ctx, request.ApprovalPolicyID)
@@ -461,7 +476,7 @@ func DecideApprovalRequest(c *fiber.Ctx) error {
 				minApprovers = int64(policy.MinApprovers)
 			}
 
-			if approvedCount >= minApprovers && pendingCount == 0 {
+			if approvedCount >= minApprovers {
 				request, err = q.UpdateApprovalRequestStatus(ctx, db.UpdateApprovalRequestStatusParams{
 					ID:     toPgUUID(id),
 					Status: "approved",
@@ -474,6 +489,7 @@ func DecideApprovalRequest(c *fiber.Ctx) error {
 
 		summaryBytes, _ := json.Marshal(fiber.Map{"decision": req.Decision, "request_id": id.String()})
 		_, err = q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+			UserID:            toPgUUID(currentUserID),
 			Module:            request.Module,
 			ActionType:        "approval_decision_recorded",
 			EntityType:        "approval_request",
@@ -496,7 +512,7 @@ func DecideApprovalRequest(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "approval request not found"})
 		}
-		if errors.Is(err, ErrRequestNotPending) || errors.Is(err, ErrSelfApprovalBlocked) || errors.Is(err, ErrAlreadyDecided) {
+		if errors.Is(err, ErrRequestNotPending) || errors.Is(err, ErrSelfApprovalBlocked) || errors.Is(err, ErrNotEligibleApprover) {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
@@ -567,6 +583,7 @@ func CancelApprovalRequest(c *fiber.Ctx) error {
 
 		summaryBytes, _ := json.Marshal(fiber.Map{"request_id": id.String(), "reason": req.Reason})
 		_, err = q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+			UserID:            toPgUUID(currentUserID),
 			Module:            request.Module,
 			ActionType:        "approval_request_cancelled",
 			EntityType:        "approval_request",
@@ -597,4 +614,79 @@ func CancelApprovalRequest(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(request)
+}
+
+func AddApprovalRequestApprover(c *fiber.Ctx) error {
+	claims := middleware.GetClaims(c)
+	if claims == nil {
+		return c.Status(401).JSON(fiber.Map{"error": "No JWT claims found"})
+	}
+
+	p := pool.Get()
+	if p == nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Database pool not initialized"})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), dbTimeout)
+	defer cancel()
+
+	var req struct {
+		ApprovalRequestID string `json:"approval_request_id" validate:"required"`
+		UserID            string `json:"user_id" validate:"required"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	approvalRequestID, err := uuid.Parse(req.ApprovalRequestID)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid approval_request_id"})
+	}
+
+	userID, err := uuid.Parse(req.UserID)
+	if err != nil {
+		return c.Status(400).JSON(fiber.Map{"error": "invalid user_id"})
+	}
+
+	var approver db.ApprovalRequestApprover
+
+	err = p.WithTx(ctx, claims, func(tx pgx.Tx) error {
+		q := db.New(tx)
+
+		request, err := q.GetApprovalRequest(ctx, toPgUUID(approvalRequestID))
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fiber.NewError(404, "approval request not found")
+			}
+			return fmt.Errorf("get approval request: %w", err)
+		}
+
+		if request.Status != "pending" {
+			return fiber.NewError(400, "can only add approvers to pending requests")
+		}
+
+		approver, err = q.CreateApprovalRequestApprover(ctx, db.CreateApprovalRequestApproverParams{
+			ApprovalRequestID: toPgUUID(approvalRequestID),
+			UserID:            toPgUUID(userID),
+		})
+		if err != nil {
+			return fmt.Errorf("create approver: %w", err)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		if isDuplicateKeyError(err) {
+			return c.Status(409).JSON(fiber.Map{"error": "user is already an approver"})
+		}
+		if fiberErr, ok := err.(*fiber.Error); ok {
+			return c.Status(fiberErr.Code).JSON(fiber.Map{"error": fiberErr.Message})
+		}
+		log.Printf("Database error: %v", err)
+		return c.Status(500).JSON(fiber.Map{"error": "internal error"})
+	}
+
+	return c.Status(201).JSON(approver)
 }

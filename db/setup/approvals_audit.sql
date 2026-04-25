@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS public.approval_policies (
     updated_at                TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
 
     CONSTRAINT approval_policies_module_check CHECK (module IN ('sales', 'finance', 'rentals', 'service_charges', 'utilities')),
-    CONSTRAINT approval_policies_request_type_check CHECK (request_type IN ('ownership_transfer', 'payment_void', 'deposit_refund', 'contract_cancellation', 'schedule_restructure', 'financial_adjustment', 'lease_termination', 'manual_override', 'prepaid_adjustment')),
+    CONSTRAINT approval_policies_request_type_check CHECK (request_type IN ('ownership_transfer', 'payment_void', 'deposit_refund', 'contract_cancellation', 'contract_termination', 'schedule_restructure', 'financial_adjustment', 'lease_termination', 'manual_override', 'prepaid_adjustment')),
     CONSTRAINT approval_policies_code_unique UNIQUE (business_entity_id, code)
 );
 
@@ -121,8 +121,39 @@ CREATE TABLE IF NOT EXISTS public.approval_requests (
     created_at            TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
 
-    CONSTRAINT approval_requests_status_check CHECK (status IN ('draft', 'pending', 'approved', 'rejected', 'cancelled', 'expired'))
+    CONSTRAINT approval_requests_status_check CHECK (status IN ('draft', 'pending', 'approved', 'rejected', 'cancelled', 'expired')),
+    CONSTRAINT approval_requests_module_check CHECK (module IN ('sales', 'finance', 'rentals', 'service_charges', 'utilities')),
+    CONSTRAINT approval_requests_request_type_check CHECK (request_type IN ('ownership_transfer', 'payment_void', 'deposit_refund', 'contract_cancellation', 'contract_termination', 'schedule_restructure', 'financial_adjustment', 'lease_termination', 'manual_override', 'prepaid_adjustment'))
 );
+
+-- Migration: Add CHECK constraints to approval_requests if they don't exist (for existing databases)
+DO $$
+BEGIN
+    -- Add module check constraint if it doesn't exist
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'approval_requests_module_check' 
+        AND conrelid = 'public.approval_requests'::regclass
+    ) THEN
+        ALTER TABLE public.approval_requests
+        ADD CONSTRAINT approval_requests_module_check 
+        CHECK (module IN ('sales', 'finance', 'rentals', 'service_charges', 'utilities'));
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    -- Add request_type check constraint if it doesn't exist
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'approval_requests_request_type_check' 
+        AND conrelid = 'public.approval_requests'::regclass
+    ) THEN
+        ALTER TABLE public.approval_requests
+        ADD CONSTRAINT approval_requests_request_type_check 
+        CHECK (request_type IN ('ownership_transfer', 'payment_void', 'deposit_refund', 'contract_cancellation', 'contract_termination', 'schedule_restructure', 'financial_adjustment', 'lease_termination', 'manual_override', 'prepaid_adjustment'));
+    END IF;
+END $$;
 
 -- Enable RLS on approval_requests
 ALTER TABLE public.approval_requests ENABLE ROW LEVEL SECURITY;
