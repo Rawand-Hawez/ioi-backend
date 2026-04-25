@@ -615,6 +615,148 @@ func TestUpdatePostedScheduleLineIsRejected(t *testing.T) {
 	require.Equal(t, http.StatusConflict, rr.Code, rr.Body.String())
 }
 
+func TestSalesReservationToActivatedContractWorkflow(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	customerID := createSalesTestParty(t, "Workflow E2E Buyer")
+	unit := getSalesTestUnit(t, unitID)
+
+	reservationRR := salesRequest(t, http.MethodPost, "/api/v1/reservations", map[string]any{
+		"business_entity_id":  unit["business_entity_id"],
+		"branch_id":           unit["branch_id"],
+		"project_id":          unit["project_id"],
+		"unit_id":             unitID,
+		"customer_id":         customerID,
+		"expires_at":          time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339),
+		"deposit_amount":      "10000.00",
+		"deposit_currency":    "USD",
+		"quoted_price_amount": "100000.00",
+		"discount_amount":     "0.00",
+	})
+	require.Equal(t, http.StatusCreated, reservationRR.Code, reservationRR.Body.String())
+	reservationID := responseID(t, reservationRR.Body)
+
+	convertRR := salesRequest(t, http.MethodPost, "/api/v1/reservations/"+reservationID+"/convert", map[string]any{})
+	require.Equal(t, http.StatusCreated, convertRR.Code, convertRR.Body.String())
+	contract := decodeSalesTestObject(t, convertRR.Body)["contract"].(map[string]any)
+	contractID := contract["id"].(string)
+
+	createSalesTestScheduleLine(t, contractID, "2026-05-01", "100000.00", "scheduled")
+
+	activateRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusOK, activateRR.Code, activateRR.Body.String())
+
+	require.Equal(t, "active", getSalesTestContract(t, contractID)["status"])
+	lines := getSalesTestScheduleLineReceivables(t, contractID)
+	require.Len(t, lines, 1)
+	require.NotEmpty(t, lines[0]["receivable_id"])
+}
+
+func TestSalesApprovalGatedCancelWorkflow(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "E2E Cancel Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "active")
+
+	requestRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/cancel", map[string]any{"reason": "buyer pulled out"})
+	require.Equal(t, http.StatusAccepted, requestRR.Code, requestRR.Body.String())
+	approvalID, _ := decodeSalesTestObject(t, requestRR.Body)["approval_request_id"].(string)
+	require.NotEmpty(t, approvalID)
+
+	require.Equal(t, "active", getSalesTestContract(t, contractID)["status"])
+
+	approveSalesTestApprovalRequest(t, approvalID)
+	applyRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/cancel", map[string]any{})
+	require.Equal(t, http.StatusOK, applyRR.Code, applyRR.Body.String())
+	require.Equal(t, "cancelled", getSalesTestContract(t, contractID)["status"])
+}
+
+func TestSalesDefaultAndCompletionWorkflow(t *testing.T) {
+	t.Run("default path", func(t *testing.T) {
+		unitID := createSalesTestUnit(t)
+		buyerID := createSalesTestParty(t, "E2E Default Buyer")
+		contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+		createSalesTestScheduleLine(t, contractID, "2026-05-01", "100000.00", "scheduled")
+		require.Equal(t, http.StatusOK, salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{}).Code)
+
+		lines := getSalesTestScheduleLineReceivables(t, contractID)
+		require.Len(t, lines, 1)
+		receivableID := lines[0]["receivable_id"]
+		beforeStatus := getSalesTestReceivableStatus(t, receivableID)
+
+		require.Equal(t, http.StatusOK, salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/mark-default", map[string]any{"reason": "stopped paying"}).Code)
+		require.Equal(t, "defaulted", getSalesTestContract(t, contractID)["status"])
+		require.Equal(t, beforeStatus, getSalesTestReceivableStatus(t, receivableID), "default must not mutate receivable")
+	})
+
+	t.Run("completion path", func(t *testing.T) {
+		unitID := createSalesTestUnit(t)
+		buyerID := createSalesTestParty(t, "E2E Completion Buyer")
+		contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+		createSalesTestScheduleLine(t, contractID, "2026-05-01", "100000.00", "scheduled")
+		require.Equal(t, http.StatusOK, salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{}).Code)
+
+		for _, line := range getSalesTestScheduleLineReceivables(t, contractID) {
+			markSalesTestReceivablePaid(t, line["receivable_id"])
+		}
+		require.Equal(t, http.StatusOK, salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/complete", map[string]any{}).Code)
+		require.Equal(t, "completed", getSalesTestContract(t, contractID)["status"])
+	})
+}
+
+func TestSalesOwnershipTransferWorkflow(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	fromBuyerID := createSalesTestParty(t, "E2E Transfer From")
+	contractID := createSalesTestContract(t, unitID, fromBuyerID, "active")
+	toBuyerID := createSalesTestParty(t, "E2E Transfer To")
+	createSalesTestUnitOwnership(t, unitID, fromBuyerID, "100.00")
+
+	requestRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/transfer-request", map[string]any{
+		"transfer_type":       "buyer_replacement",
+		"from_party_id":       fromBuyerID,
+		"to_party_id":         toBuyerID,
+		"effective_date":      "2026-05-01",
+		"financial_treatment": "no_change",
+	})
+	require.Equal(t, http.StatusCreated, requestRR.Code, requestRR.Body.String())
+	body := decodeSalesTestObject(t, requestRR.Body)
+	transferID, _ := body["id"].(string)
+	approvalID, _ := body["approval_request_id"].(string)
+	require.NotEmpty(t, transferID)
+	require.NotEmpty(t, approvalID)
+
+	approveSalesTestApprovalRequest(t, approvalID)
+	require.Equal(t, http.StatusOK, salesRequest(t, http.MethodPost, "/api/v1/ownership-transfers/"+transferID+"/complete", map[string]any{}).Code)
+
+	require.Equal(t, toBuyerID, getSalesTestContract(t, contractID)["primary_buyer_id"])
+	require.Equal(t, "inactive", getSalesTestSalesContractParty(t, contractID, fromBuyerID)["status"])
+	require.Equal(t, "active", getSalesTestSalesContractParty(t, contractID, toBuyerID)["status"])
+	require.Equal(t, "inactive", getSalesTestUnitOwnership(t, unitID, fromBuyerID)["status"])
+	require.Equal(t, "active", getSalesTestUnitOwnership(t, unitID, toBuyerID)["status"])
+}
+
+func TestSalesPermissionFailuresWorkflow(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "E2E Permission Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "active")
+
+	restrictedToken := createRestrictedTestToken(t)
+	cases := []struct {
+		method string
+		path   string
+		body   any
+	}{
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/cancel", map[string]any{"reason": "x"}},
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/terminate", map[string]any{"reason": "x"}},
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/complete", map[string]any{}},
+		{"POST", "/api/v1/sales-contracts/" + contractID + "/mark-default", map[string]any{"reason": "x"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			rr := salesRequestWithToken(t, restrictedToken, tc.method, tc.path, tc.body)
+			require.Equal(t, http.StatusForbidden, rr.Code, rr.Body.String())
+		})
+	}
+}
+
 func TestRequestOwnershipTransferRequiresActiveFromParty(t *testing.T) {
 	unitID := createSalesTestUnit(t)
 	buyerID := createSalesTestParty(t, "Original Owner Active")
