@@ -551,6 +551,70 @@ func TestMarkSalesContractDefaultedOnlyChangesContractState(t *testing.T) {
 	require.Equal(t, beforeOutstanding, getSalesTestReceivableOutstanding(t, receivableID))
 }
 
+func TestUpdateDraftScheduleLineMutatesImmediately(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Draft Schedule Edit Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+	lineID := createSalesTestScheduleLine(t, contractID, "2026-05-01", "10000.00", "scheduled")
+
+	rr := salesRequest(t, http.MethodPatch, "/api/v1/schedule-lines/"+lineID, map[string]any{
+		"due_date":         "2026-07-01",
+		"principal_amount": "11000.00",
+	})
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	body := decodeSalesTestObject(t, rr.Body)
+	require.Equal(t, "2026-07-01", normalizeSalesTestJSONDate(t, body["due_date"]))
+	require.Equal(t, "11000.00", normalizeSalesTestJSONAmount(t, body["principal_amount"]))
+}
+
+func TestUpdateActiveFutureScheduleLineCreatesApprovalRequest(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Active Future Schedule Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+	futureDate := time.Now().Add(60 * 24 * time.Hour).Format("2006-01-02")
+	createSalesTestScheduleLine(t, contractID, futureDate, "100000.00", "scheduled")
+
+	activateRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusOK, activateRR.Code, activateRR.Body.String())
+
+	lines := getSalesTestScheduleLineReceivables(t, contractID)
+	require.Len(t, lines, 1)
+	lineID := lines[0]["id"]
+
+	newDate := time.Now().Add(90 * 24 * time.Hour).Format("2006-01-02")
+	rr := salesRequest(t, http.MethodPatch, "/api/v1/schedule-lines/"+lineID, map[string]any{
+		"due_date": newDate,
+	})
+	require.Equal(t, http.StatusAccepted, rr.Code, rr.Body.String())
+	body := decodeSalesTestObject(t, rr.Body)
+	approvalID, _ := body["approval_request_id"].(string)
+	require.NotEmpty(t, approvalID)
+
+	require.Equal(t, "pending", getSalesTestApprovalRequestStatus(t, approvalID))
+}
+
+func TestUpdatePostedScheduleLineIsRejected(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Posted Schedule Edit Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+	futureDate := time.Now().Add(60 * 24 * time.Hour).Format("2006-01-02")
+	createSalesTestScheduleLine(t, contractID, futureDate, "100000.00", "scheduled")
+
+	activateRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusOK, activateRR.Code, activateRR.Body.String())
+
+	lines := getSalesTestScheduleLineReceivables(t, contractID)
+	require.Len(t, lines, 1)
+	lineID := lines[0]["id"]
+	receivableID := lines[0]["receivable_id"]
+	markSalesTestReceivablePaid(t, receivableID)
+
+	rr := salesRequest(t, http.MethodPatch, "/api/v1/schedule-lines/"+lineID, map[string]any{
+		"due_date": time.Now().Add(120 * 24 * time.Hour).Format("2006-01-02"),
+	})
+	require.Equal(t, http.StatusConflict, rr.Code, rr.Body.String())
+}
+
 func TestCancelOrTerminateDoesNotCreateDuplicatePendingApprovals(t *testing.T) {
 	unitID := createSalesTestUnit(t)
 	cancelBuyerID := createSalesTestParty(t, "Cancel Dup Buyer")

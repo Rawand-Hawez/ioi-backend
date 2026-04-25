@@ -1887,6 +1887,8 @@ func UpdateInstallmentScheduleLine(c *fiber.Ctx) error {
 	defer cancel()
 
 	var line db.InstallmentScheduleLine
+	var approvalRequestID pgtype.UUID
+	var action string
 
 	err = p.WithTx(ctx, claims, func(tx pgx.Tx) error {
 		q := db.New(tx)
@@ -1901,55 +1903,123 @@ func UpdateInstallmentScheduleLine(c *fiber.Ctx) error {
 			return err
 		}
 
-		if contract.Status != "draft" {
-			return errors.New("can only update schedule lines for draft contracts")
-		}
+		switch contract.Status {
+		case "draft":
+			updateParams := db.UpdateInstallmentScheduleLineParams{
+				ID:                    toPgUUID(id),
+				DueDate:               toPgDate(req.DueDate),
+				Description:           toPgText(req.Description),
+				PrincipalAmount:       toPgNumeric(req.PrincipalAmount),
+				PenaltyAmountAccrued:  toPgNumeric(req.PenaltyAmountAccrued),
+				DiscountAmountApplied: toPgNumeric(req.DiscountAmountApplied),
+			}
+			if req.Status != nil {
+				updateParams.Status = toPgText(req.Status)
+			}
 
-		updateParams := db.UpdateInstallmentScheduleLineParams{
-			ID:                    toPgUUID(id),
-			DueDate:               toPgDate(req.DueDate),
-			Description:           toPgText(req.Description),
-			PrincipalAmount:       toPgNumeric(req.PrincipalAmount),
-			PenaltyAmountAccrued:  toPgNumeric(req.PenaltyAmountAccrued),
-			DiscountAmountApplied: toPgNumeric(req.DiscountAmountApplied),
-		}
+			line, err = q.UpdateInstallmentScheduleLine(ctx, updateParams)
+			if err != nil {
+				return err
+			}
 
-		if req.Status != nil {
-			updateParams.Status = toPgText(req.Status)
-		}
+			afterSnapshot, _ := json.Marshal(line)
+			if _, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+				EventTime:         pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:            toPgUUID(userID),
+				Module:            "sales",
+				ActionType:        "update_schedule_line",
+				EntityType:        "installment_schedule_line",
+				EntityID:          toPgUUID(id),
+				ScopeType:         "project",
+				ScopeID:           contract.ProjectID,
+				ResultStatus:      "success",
+				SummaryText:       "Updated installment schedule line",
+				AfterSnapshotJson: afterSnapshot,
+			}); err != nil {
+				return err
+			}
+			action = "applied"
+			return nil
 
-		line, err = q.UpdateInstallmentScheduleLine(ctx, updateParams)
-		if err != nil {
-			return err
-		}
+		case "active":
+			if existing.ReceivableID.Valid {
+				receivable, err := q.GetReceivable(ctx, existing.ReceivableID)
+				if err != nil {
+					return err
+				}
+				if receivable.Status == "paid" || receivable.Status == "partially_paid" {
+					return errors.New("schedule line receivable already paid or partially paid")
+				}
+			}
 
-		afterSnapshot, _ := json.Marshal(line)
-		auditParams := db.InsertAuditLogParams{
-			EventTime:         pgtype.Timestamptz{Time: time.Now(), Valid: true},
-			UserID:            toPgUUID(userID),
-			Module:            "sales",
-			ActionType:        "update_schedule_line",
-			EntityType:        "installment_schedule_line",
-			EntityID:          toPgUUID(id),
-			ScopeType:         "project",
-			ScopeID:           contract.ProjectID,
-			ResultStatus:      "success",
-			SummaryText:       "Updated installment schedule line",
-			AfterSnapshotJson: afterSnapshot,
+			if existing.DueDate.Valid && !existing.DueDate.Time.After(time.Now()) {
+				return errors.New("can only restructure future schedule lines")
+			}
+
+			payload, _ := json.Marshal(req)
+			created, err := q.CreateApprovalRequest(ctx, db.CreateApprovalRequestParams{
+				BusinessEntityID:    contract.BusinessEntityID,
+				BranchID:            contract.BranchID,
+				Module:              "sales",
+				RequestType:         "schedule_restructure",
+				SourceRecordType:    "installment_schedule_line",
+				SourceRecordID:      toPgUUID(id),
+				RequestedByUserID:   toPgUUID(userID),
+				Status:              "pending",
+				PayloadSnapshotJson: payload,
+			})
+			if err != nil {
+				return err
+			}
+			approvalRequestID = created.ID
+
+			beforeSnapshot, _ := json.Marshal(existing)
+			if _, err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+				EventTime:                pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				UserID:                   toPgUUID(userID),
+				Module:                   "sales",
+				ActionType:               "request_schedule_restructure",
+				EntityType:               "installment_schedule_line",
+				EntityID:                 toPgUUID(id),
+				ScopeType:                "project",
+				ScopeID:                  contract.ProjectID,
+				ResultStatus:             "success",
+				SummaryText:              "Requested approval for schedule line restructure",
+				BeforeSnapshotJson:       beforeSnapshot,
+				RelatedApprovalRequestID: created.ID,
+			}); err != nil {
+				return err
+			}
+			action = "approval_requested"
+			line = existing
+			return nil
+
+		default:
+			return errors.New("can only update schedule lines for draft or active contracts")
 		}
-		_, err = q.InsertAuditLog(ctx, auditParams)
-		return err
 	})
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "schedule line not found"})
 		}
-		if err.Error() == "can only update schedule lines for draft contracts" {
-			return c.Status(409).JSON(fiber.Map{"error": "can only update schedule lines for draft contracts"})
+		switch err.Error() {
+		case "can only update schedule lines for draft or active contracts":
+			return c.Status(409).JSON(fiber.Map{"error": err.Error()})
+		case "schedule line receivable already paid or partially paid",
+			"can only restructure future schedule lines":
+			return c.Status(409).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to update schedule line"})
+	}
+
+	if action == "approval_requested" {
+		return c.Status(202).JSON(fiber.Map{
+			"message":             "schedule restructure request submitted for approval",
+			"schedule_line_id":    id,
+			"approval_request_id": formatApprovalRequestUUID(approvalRequestID),
+		})
 	}
 
 	return c.JSON(line)

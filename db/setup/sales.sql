@@ -804,6 +804,38 @@ BEGIN
 END $$;
 
 -- =============================================================================
+-- 5b. Immutability trigger: posted schedule lines (financial fields locked once
+--     a receivable has been linked to the line — direct mutation must be
+--     approval-gated and applied through a controlled flow)
+-- =============================================================================
+CREATE OR REPLACE FUNCTION prevent_posted_schedule_line_mutation()
+RETURNS trigger AS $$
+BEGIN
+    IF OLD.receivable_id IS NOT NULL
+       AND (
+           NEW.principal_amount IS DISTINCT FROM OLD.principal_amount
+           OR NEW.due_date IS DISTINCT FROM OLD.due_date
+           OR NEW.line_type IS DISTINCT FROM OLD.line_type
+       ) THEN
+        RAISE EXCEPTION 'posted schedule lines are immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger WHERE tgname = 'trg_prevent_posted_schedule_line_mutation'
+    ) THEN
+        CREATE TRIGGER trg_prevent_posted_schedule_line_mutation
+            BEFORE UPDATE ON public.installment_schedule_lines
+            FOR EACH ROW
+            EXECUTE FUNCTION prevent_posted_schedule_line_mutation();
+    END IF;
+END $$;
+
+-- =============================================================================
 -- 6. Notify PostgREST to reload schema
 -- =============================================================================
 NOTIFY pgrst, 'reload schema';
