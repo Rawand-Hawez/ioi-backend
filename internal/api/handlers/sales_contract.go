@@ -1358,9 +1358,25 @@ func CompleteSalesContract(c *fiber.Ctx) error {
 			return err
 		}
 
+		if len(scheduleLines) == 0 {
+			return errors.New("contract has no schedule lines")
+		}
+
+		zero := big.NewRat(0, 1)
 		for _, line := range scheduleLines {
-			if line.Status != "paid" {
-				return errors.New("all schedule lines must be paid before completing contract")
+			if !line.ReceivableID.Valid {
+				return errors.New("schedule line has no linked receivable")
+			}
+			receivable, err := q.GetReceivable(ctx, line.ReceivableID)
+			if err != nil {
+				return fmt.Errorf("failed to load receivable for schedule line: %w", err)
+			}
+			if receivable.Status != "paid" {
+				return errors.New("schedule line receivable not settled")
+			}
+			outstanding := numericToRat(&receivable.OutstandingAmount)
+			if outstanding == nil || outstanding.Cmp(zero) != 0 {
+				return errors.New("schedule line receivable has outstanding balance")
 			}
 		}
 
@@ -1399,8 +1415,12 @@ func CompleteSalesContract(c *fiber.Ctx) error {
 		if err.Error() == "can only complete active contracts" {
 			return c.Status(409).JSON(fiber.Map{"error": "can only complete active contracts"})
 		}
-		if err.Error() == "all schedule lines must be paid before completing contract" {
-			return c.Status(400).JSON(fiber.Map{"error": "all schedule lines must be paid before completing contract"})
+		switch err.Error() {
+		case "contract has no schedule lines",
+			"schedule line has no linked receivable",
+			"schedule line receivable not settled",
+			"schedule line receivable has outstanding balance":
+			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to complete sales contract"})

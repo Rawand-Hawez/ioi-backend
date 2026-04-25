@@ -488,6 +488,69 @@ func TestTerminateSalesContractCreatesApprovalAndAppliesAfterApproval(t *testing
 	require.Equal(t, "terminated", getSalesTestContract(t, contractID)["status"])
 }
 
+func TestCompleteSalesContractRejectsOutstandingReceivables(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Outstanding Receivables Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+	createSalesTestScheduleLine(t, contractID, "2026-05-01", "40000.00", "scheduled")
+	createSalesTestScheduleLine(t, contractID, "2026-06-01", "60000.00", "scheduled")
+
+	activateRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusOK, activateRR.Code, activateRR.Body.String())
+
+	lines := getSalesTestScheduleLineReceivables(t, contractID)
+	require.Len(t, lines, 2)
+	markSalesTestReceivablePaid(t, lines[0]["receivable_id"])
+
+	completeRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/complete", map[string]any{})
+	require.Equal(t, http.StatusBadRequest, completeRR.Code, completeRR.Body.String())
+	require.Equal(t, "active", getSalesTestContract(t, contractID)["status"])
+}
+
+func TestCompleteSalesContractRequiresLinkedReceivablesSettled(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Settled Receivables Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+	createSalesTestScheduleLine(t, contractID, "2026-05-01", "40000.00", "scheduled")
+	createSalesTestScheduleLine(t, contractID, "2026-06-01", "60000.00", "scheduled")
+
+	activateRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusOK, activateRR.Code, activateRR.Body.String())
+
+	lines := getSalesTestScheduleLineReceivables(t, contractID)
+	require.Len(t, lines, 2)
+	for _, line := range lines {
+		markSalesTestReceivablePaid(t, line["receivable_id"])
+	}
+
+	completeRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/complete", map[string]any{})
+	require.Equal(t, http.StatusOK, completeRR.Code, completeRR.Body.String())
+	require.Equal(t, "completed", getSalesTestContract(t, contractID)["status"])
+}
+
+func TestMarkSalesContractDefaultedOnlyChangesContractState(t *testing.T) {
+	unitID := createSalesTestUnit(t)
+	buyerID := createSalesTestParty(t, "Defaulted Buyer")
+	contractID := createSalesTestContract(t, unitID, buyerID, "draft")
+	createSalesTestScheduleLine(t, contractID, "2026-05-01", "100000.00", "scheduled")
+
+	activateRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/activate", map[string]any{})
+	require.Equal(t, http.StatusOK, activateRR.Code, activateRR.Body.String())
+
+	lines := getSalesTestScheduleLineReceivables(t, contractID)
+	require.Len(t, lines, 1)
+	receivableID := lines[0]["receivable_id"]
+	beforeStatus := getSalesTestReceivableStatus(t, receivableID)
+	beforeOutstanding := getSalesTestReceivableOutstanding(t, receivableID)
+
+	markRR := salesRequest(t, http.MethodPost, "/api/v1/sales-contracts/"+contractID+"/mark-default", map[string]any{"reason": "stopped paying"})
+	require.Equal(t, http.StatusOK, markRR.Code, markRR.Body.String())
+
+	require.Equal(t, "defaulted", getSalesTestContract(t, contractID)["status"])
+	require.Equal(t, beforeStatus, getSalesTestReceivableStatus(t, receivableID))
+	require.Equal(t, beforeOutstanding, getSalesTestReceivableOutstanding(t, receivableID))
+}
+
 func TestCancelOrTerminateDoesNotCreateDuplicatePendingApprovals(t *testing.T) {
 	unitID := createSalesTestUnit(t)
 	cancelBuyerID := createSalesTestParty(t, "Cancel Dup Buyer")
@@ -1067,6 +1130,56 @@ func countSalesTestApprovalsForContract(t *testing.T, contractID string, request
 	})
 	require.NoError(t, err)
 	return count
+}
+
+func markSalesTestReceivablePaid(t *testing.T, receivableID string) {
+	t.Helper()
+
+	receivableUUID := uuid.MustParse(receivableID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		_, err := tx.Exec(context.Background(), `
+			UPDATE receivables
+			SET paid_amount = original_amount,
+			    status = 'paid',
+			    updated_at = timezone('utc', now())
+			WHERE id = $1
+		`, receivableUUID)
+		return err
+	})
+	require.NoError(t, err)
+}
+
+func getSalesTestReceivableStatus(t *testing.T, receivableID string) string {
+	t.Helper()
+
+	receivableUUID := uuid.MustParse(receivableID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	var status string
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `SELECT status FROM receivables WHERE id = $1`, receivableUUID).Scan(&status)
+	})
+	require.NoError(t, err)
+	return status
+}
+
+func getSalesTestReceivableOutstanding(t *testing.T, receivableID string) string {
+	t.Helper()
+
+	receivableUUID := uuid.MustParse(receivableID)
+	p := pool.Get()
+	require.NotNil(t, p)
+
+	var outstanding string
+	err := p.WithTx(context.Background(), map[string]any{"sub": testToken}, func(tx pgx.Tx) error {
+		return tx.QueryRow(context.Background(), `SELECT outstanding_amount::text FROM receivables WHERE id = $1`, receivableUUID).Scan(&outstanding)
+	})
+	require.NoError(t, err)
+	return outstanding
 }
 
 func expireSalesTestReservation(t *testing.T, reservationID string) {
