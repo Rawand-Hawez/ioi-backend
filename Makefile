@@ -30,6 +30,8 @@ db-setup:
 	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/approvals_audit.sql
 	@echo "Creating sales tables..."
 	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/sales.sql
+	@echo "Creating rentals tables..."
+	@docker exec -i skeleton_postgres psql -U postgres -d app_database < db/setup/rentals.sql
 	@echo "Syncing PostgREST authenticator password..."
 	@docker exec -i skeleton_postgres psql -U postgres -d app_database -c "ALTER ROLE authenticator WITH PASSWORD '$(POSTGREST_PASSWORD)';"
 	@echo "Seeding development user..."

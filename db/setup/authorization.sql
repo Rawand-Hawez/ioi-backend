@@ -359,8 +359,14 @@ INSERT INTO public.permissions (key, module, description) VALUES
     ('sales.payment_plan.create', 'sales', 'Create payment plan templates'),
     -- Rentals
     ('rentals.lease.create', 'rentals', 'Create lease contracts'),
+    ('rentals.lease.edit', 'rentals', 'Edit draft lease contracts'),
     ('rentals.lease.activate', 'rentals', 'Activate lease contracts'),
-    ('rentals.lease.terminate', 'rentals', 'Terminate lease contracts'),
+    ('rentals.lease.terminate', 'rentals', 'Request or apply lease termination'),
+    ('rentals.lease.renew', 'rentals', 'Renew lease contracts'),
+    ('rentals.lease.deposit_refund', 'rentals', 'Request lease deposit refunds'),
+    ('rentals.bill.generate', 'rentals', 'Generate lease bills'),
+    ('rentals.bill.issue', 'rentals', 'Issue lease bills as receivables'),
+    ('rentals.bill.void', 'rentals', 'Void lease bills'),
     -- Finance
     ('finance.payment.create', 'finance', 'Create payments'),
     ('finance.payment.post', 'finance', 'Post payments'),
@@ -406,12 +412,19 @@ WHERE r.code = 'business_entity_admin'
   AND p.key NOT IN ('admin.users.manage', 'admin.roles.assign')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- branch_manager: inventory.unit.*, sales.reservation.create, sales.reservation.cancel, sales.reservation.convert, sales.contract.create, sales.contract.edit, sales.schedule.generate, sales.schedule.edit, rentals.lease.create, finance.payment.create, finance.payment.post, sc.*, utility.*
+-- branch_manager: inventory.unit.*, sales.* officer scope, rentals lease officer + bill generate/issue, finance payment create/post, sc.*, utility.*
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM public.roles r, public.permissions p
 WHERE r.code = 'branch_manager'
-  AND (p.key LIKE 'inventory.unit.%' OR p.key IN ('sales.reservation.create', 'sales.reservation.cancel', 'sales.reservation.convert', 'sales.contract.create', 'sales.contract.edit', 'sales.schedule.generate', 'sales.schedule.edit', 'rentals.lease.create', 'finance.payment.create', 'finance.payment.post') OR p.key LIKE 'sc.%' OR p.key LIKE 'utility.%')
+  AND (p.key LIKE 'inventory.unit.%'
+    OR p.key IN ('sales.reservation.create', 'sales.reservation.cancel', 'sales.reservation.convert',
+                 'sales.contract.create', 'sales.contract.edit',
+                 'sales.schedule.generate', 'sales.schedule.edit',
+                 'rentals.lease.create', 'rentals.lease.edit', 'rentals.lease.activate', 'rentals.lease.renew',
+                 'rentals.bill.generate', 'rentals.bill.issue',
+                 'finance.payment.create', 'finance.payment.post')
+    OR p.key LIKE 'sc.%' OR p.key LIKE 'utility.%')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- sales_officer: inventory.unit.view, sales.reservation.create, sales.reservation.cancel, sales.reservation.convert, sales.contract.create, sales.contract.edit, sales.contract.activate, sales.transfer.request, sales.ownership.transfer, sales.schedule.generate, sales.schedule.edit, sales.payment_plan.create, finance.payment.create
@@ -430,20 +443,26 @@ WHERE r.code = 'sales_approver'
   AND p.key IN ('inventory.unit.view', 'sales.transfer.approve', 'sales.ownership.transfer.complete', 'sales.contract.cancel', 'sales.contract.terminate', 'approvals.request.decide')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- leasing_officer: inventory.unit.view, rentals.lease.create, rentals.lease.activate, finance.payment.create
+-- leasing_officer: lease officer scope incl. renew + bill generate/issue
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM public.roles r, public.permissions p
 WHERE r.code = 'leasing_officer'
-  AND p.key IN ('inventory.unit.view', 'rentals.lease.create', 'rentals.lease.activate', 'finance.payment.create')
+  AND p.key IN ('inventory.unit.view',
+                'rentals.lease.create', 'rentals.lease.edit', 'rentals.lease.activate', 'rentals.lease.renew',
+                'rentals.bill.generate', 'rentals.bill.issue',
+                'finance.payment.create')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- leasing_approver: inventory.unit.view, rentals.lease.terminate, approvals.request.decide
+-- leasing_approver: termination, deposit refund, bill void, approvals decide
 INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM public.roles r, public.permissions p
 WHERE r.code = 'leasing_approver'
-  AND p.key IN ('inventory.unit.view', 'rentals.lease.terminate', 'approvals.request.decide')
+  AND p.key IN ('inventory.unit.view',
+                'rentals.lease.terminate', 'rentals.lease.deposit_refund',
+                'rentals.bill.void',
+                'approvals.request.decide')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- cashier: inventory.unit.view, finance.payment.create, finance.payment.post

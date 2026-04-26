@@ -85,3 +85,22 @@ SELECT EXISTS (
       AND p.key = $2
       AND r.is_active = true
 ) AS has_permission;
+
+-- name: CheckUserPermissionInScope :one
+-- Returns true if user has permission at deployment scope or at the target business_entity/branch/project scope.
+SELECT EXISTS (
+    SELECT 1
+    FROM public.user_role_scope_assignments ursa
+    JOIN public.roles r ON r.id = ursa.role_id
+    JOIN public.role_permissions rp ON rp.role_id = r.id
+    JOIN public.permissions p ON p.id = rp.permission_id
+    WHERE ursa.user_id = $1
+      AND p.key = $2
+      AND r.is_active = true
+      AND (
+        ursa.scope_type = 'deployment'
+        OR (ursa.scope_type = 'business_entity' AND ursa.scope_id = $3)
+        OR (ursa.scope_type = 'branch' AND ursa.scope_id = $4)
+        OR (ursa.scope_type = 'project' AND ursa.scope_id = $5)
+      )
+) AS has_permission;

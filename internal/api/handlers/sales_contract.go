@@ -21,28 +21,6 @@ import (
 	"IOI-real-estate-backend/internal/db/pool"
 )
 
-var validContractTransitions = map[string][]string{
-	"draft":      {"active", "cancelled"},
-	"active":     {"completed", "cancelled", "terminated", "defaulted"},
-	"completed":  {},
-	"cancelled":  {},
-	"terminated": {},
-	"defaulted":  {},
-}
-
-func isValidContractTransition(from, to string) bool {
-	allowed, ok := validContractTransitions[from]
-	if !ok {
-		return false
-	}
-	for _, t := range allowed {
-		if t == to {
-			return true
-		}
-	}
-	return false
-}
-
 type derivedContractAmounts struct {
 	Discount string
 	Net      string
@@ -111,10 +89,6 @@ func parseOptionalAmount(field string, value *string, defaultAmount *big.Rat) (*
 		return new(big.Rat).Set(defaultAmount), nil
 	}
 	return parseRequiredAmount(field, value)
-}
-
-func formatContractAmount(amount *big.Rat) string {
-	return amount.FloatString(2)
 }
 
 func numericContractAmount(field string, amount pgtype.Numeric) (string, error) {
@@ -234,34 +208,6 @@ func anchorDate(anchor string, anchors scheduleAnchors) time.Time {
 	default:
 		return anchors.ContractDate
 	}
-}
-
-func addMonthsClamped(date time.Time, months int) time.Time {
-	if months == 0 {
-		return date
-	}
-	targetFirst := time.Date(date.Year(), date.Month()+time.Month(months), 1, 0, 0, 0, 0, date.Location())
-	targetLastDay := targetFirst.AddDate(0, 1, -1).Day()
-	day := date.Day()
-	if day > targetLastDay {
-		day = targetLastDay
-	}
-	return time.Date(targetFirst.Year(), targetFirst.Month(), day, 0, 0, 0, 0, date.Location())
-}
-
-func roundRatToCents(amount *big.Rat) int64 {
-	scaled := new(big.Rat).Mul(amount, big.NewRat(100, 1))
-	quotient := new(big.Int)
-	remainder := new(big.Int)
-	quotient.QuoRem(scaled.Num(), scaled.Denom(), remainder)
-	if new(big.Int).Mul(remainder, big.NewInt(2)).Cmp(scaled.Denom()) >= 0 {
-		quotient.Add(quotient, big.NewInt(1))
-	}
-	return quotient.Int64()
-}
-
-func formatCents(cents int64) string {
-	return fmt.Sprintf("%d.%02d", cents/100, cents%100)
 }
 
 func usesHandoverDate(rule paymentPlanGenerationRule) bool {
@@ -661,8 +607,8 @@ func CreateSalesContract(c *fiber.Ctx) error {
 	})
 
 	if err != nil {
-		if err.Error() == "unit already has an active sales contract" {
-			return c.Status(409).JSON(fiber.Map{"error": "unit already has an active sales contract"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		if isDuplicateKeyError(err) {
 			return c.Status(409).JSON(fiber.Map{"error": "sales contract already exists"})
@@ -730,7 +676,7 @@ func UpdateSalesContract(c *fiber.Ctx) error {
 		}
 
 		if existing.Status != "draft" {
-			return errors.New("can only update draft contracts")
+			return ErrSalesNotDraft
 		}
 
 		updateParams := db.UpdateSalesContractParams{
@@ -773,8 +719,8 @@ func UpdateSalesContract(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
-		if err.Error() == "can only update draft contracts" {
-			return c.Status(409).JSON(fiber.Map{"error": "can only update draft contracts"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to update sales contract"})
@@ -824,7 +770,7 @@ func ActivateSalesContract(c *fiber.Ctx) error {
 		}
 
 		if existing.Status != "draft" {
-			return errors.New("can only activate draft contracts")
+			return ErrSalesActivateNotDraft
 		}
 
 		activeContract, err := q.GetActiveSalesContractForUnit(ctx, existing.UnitID)
@@ -832,7 +778,7 @@ func ActivateSalesContract(c *fiber.Ctx) error {
 			return err
 		}
 		if activeContract.ID.Valid && activeContract.ID.Bytes != id {
-			return errors.New("unit already has an active sales contract")
+			return ErrSalesUnitHasActiveContract
 		}
 
 		scheduleLines, err = q.ListInstallmentScheduleLines(ctx, toPgUUID(id))
@@ -844,7 +790,7 @@ func ActivateSalesContract(c *fiber.Ctx) error {
 			scheduleLines, err = createScheduleLinesFromTemplate(ctx, q, id, existing, generateSalesContractScheduleRequest{})
 			if err != nil {
 				if err.Error() == "payment_plan_template_id is required" {
-					return errors.New("cannot activate contract with no schedule lines")
+					return ErrSalesActivateNoScheduleLines
 				}
 				return err
 			}
@@ -859,7 +805,7 @@ func ActivateSalesContract(c *fiber.Ctx) error {
 				if receivable.SourceModule != "sales" ||
 					receivable.SourceRecordType != "installment_schedule_line" ||
 					receivable.SourceRecordID.Bytes != line.ID.Bytes {
-					return errors.New("schedule line receivable does not match line")
+					return ErrSalesReceivableMismatch
 				}
 				continue
 			}
@@ -939,17 +885,8 @@ func ActivateSalesContract(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
-		if err.Error() == "can only activate draft contracts" {
-			return c.Status(409).JSON(fiber.Map{"error": "can only activate draft contracts"})
-		}
-		if err.Error() == "unit already has an active sales contract" {
-			return c.Status(409).JSON(fiber.Map{"error": "unit already has an active sales contract"})
-		}
-		if err.Error() == "cannot activate contract with no schedule lines" {
-			return c.Status(400).JSON(fiber.Map{"error": "cannot activate contract with no schedule lines"})
-		}
-		if err.Error() == "schedule line receivable does not match line" {
-			return c.Status(409).JSON(fiber.Map{"error": "schedule line receivable does not match line"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to activate sales contract"})
@@ -999,6 +936,12 @@ func handleSalesContractApprovalGate(
 			})
 			if err != nil {
 				return out, err
+			}
+			if _, err := q.UpdateUnit(ctx, db.UpdateUnitParams{
+				ID:          contract.UnitID,
+				SalesStatus: toPgText(strPtr("available")),
+			}); err != nil {
+				return out, fmt.Errorf("failed to reset unit sales status: %w", err)
 			}
 			beforeSnapshot, _ := json.Marshal(contract)
 			afterSnapshot, _ := json.Marshal(updated)
@@ -1177,15 +1120,15 @@ func CancelSalesContract(c *fiber.Ctx) error {
 			return nil
 		}
 
-		return errors.New("invalid contract status for cancellation")
+		return ErrSalesCancelInvalidStatus
 	})
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
-		if err.Error() == "invalid contract status for cancellation" {
-			return c.Status(409).JSON(fiber.Map{"error": "invalid contract status for cancellation"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to cancel sales contract"})
@@ -1264,7 +1207,7 @@ func TerminateSalesContract(c *fiber.Ctx) error {
 		}
 
 		if existing.Status != "active" {
-			return errors.New("can only terminate active contracts")
+			return ErrSalesTerminateNotActive
 		}
 
 		o, err := handleSalesContractApprovalGate(ctx, q, existing, "contract_termination", "terminated", "termination", userID, req.Reason)
@@ -1279,8 +1222,8 @@ func TerminateSalesContract(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
-		if err.Error() == "can only terminate active contracts" {
-			return c.Status(409).JSON(fiber.Map{"error": "can only terminate active contracts"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to terminate sales contract"})
@@ -1350,7 +1293,7 @@ func CompleteSalesContract(c *fiber.Ctx) error {
 		}
 
 		if existing.Status != "active" {
-			return errors.New("can only complete active contracts")
+			return ErrSalesCompleteNotActive
 		}
 
 		scheduleLines, err := q.ListInstallmentScheduleLines(ctx, toPgUUID(id))
@@ -1359,24 +1302,24 @@ func CompleteSalesContract(c *fiber.Ctx) error {
 		}
 
 		if len(scheduleLines) == 0 {
-			return errors.New("contract has no schedule lines")
+			return ErrSalesCompleteNoSchedule
 		}
 
 		zero := big.NewRat(0, 1)
 		for _, line := range scheduleLines {
 			if !line.ReceivableID.Valid {
-				return errors.New("schedule line has no linked receivable")
+				return ErrSalesCompleteNoReceivable
 			}
 			receivable, err := q.GetReceivable(ctx, line.ReceivableID)
 			if err != nil {
 				return fmt.Errorf("failed to load receivable for schedule line: %w", err)
 			}
 			if receivable.Status != "paid" {
-				return errors.New("schedule line receivable not settled")
+				return ErrSalesCompleteReceivableOpen
 			}
 			outstanding := numericToRat(&receivable.OutstandingAmount)
 			if outstanding == nil || outstanding.Cmp(zero) != 0 {
-				return errors.New("schedule line receivable has outstanding balance")
+				return ErrSalesCompleteOutstanding
 			}
 		}
 
@@ -1412,15 +1355,8 @@ func CompleteSalesContract(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
-		if err.Error() == "can only complete active contracts" {
-			return c.Status(409).JSON(fiber.Map{"error": "can only complete active contracts"})
-		}
-		switch err.Error() {
-		case "contract has no schedule lines",
-			"schedule line has no linked receivable",
-			"schedule line receivable not settled",
-			"schedule line receivable has outstanding balance":
-			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to complete sales contract"})
@@ -1472,7 +1408,7 @@ func MarkSalesContractDefaulted(c *fiber.Ctx) error {
 		}
 
 		if existing.Status != "active" {
-			return errors.New("can only mark active contracts as defaulted")
+			return ErrSalesDefaultNotActive
 		}
 
 		statusParams := db.UpdateSalesContractStatusParams{
@@ -1507,8 +1443,8 @@ func MarkSalesContractDefaulted(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
-		if err.Error() == "can only mark active contracts as defaulted" {
-			return c.Status(409).JSON(fiber.Map{"error": "can only mark active contracts as defaulted"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to mark contract as defaulted"})
@@ -1612,7 +1548,7 @@ func GenerateSalesContractSchedule(c *fiber.Ctx) error {
 		}
 
 		if contract.Status != "draft" {
-			return errors.New("can only generate schedule for draft contracts")
+			return ErrSalesScheduleNotDraft
 		}
 		if !contract.PaymentPlanTemplateID.Valid {
 			return errors.New("payment_plan_template_id is required")
@@ -1625,10 +1561,10 @@ func GenerateSalesContractSchedule(c *fiber.Ctx) error {
 		if len(existingLines) > 0 {
 			for _, line := range existingLines {
 				if line.ReceivableID.Valid {
-					return errors.New("schedule has receivables and cannot be regenerated")
+					return ErrSalesScheduleHasReceivables
 				}
 			}
-			return errors.New("schedule already exists for this contract")
+			return ErrSalesScheduleExists
 		}
 
 		scheduleLines, err = createScheduleLinesFromTemplate(ctx, q, id, contract, req)
@@ -1658,14 +1594,8 @@ func GenerateSalesContractSchedule(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
-		if err.Error() == "can only generate schedule for draft contracts" {
-			return c.Status(409).JSON(fiber.Map{"error": "can only generate schedule for draft contracts"})
-		}
-		if err.Error() == "schedule already exists for this contract" {
-			return c.Status(409).JSON(fiber.Map{"error": "schedule already exists for this contract"})
-		}
-		if err.Error() == "schedule has receivables and cannot be regenerated" {
-			return c.Status(409).JSON(fiber.Map{"error": "schedule has receivables and cannot be regenerated"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		if isScheduleGenerationBadRequest(err) {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
@@ -1785,7 +1715,7 @@ func AddInstallmentScheduleLine(c *fiber.Ctx) error {
 		}
 
 		if contract.Status != "draft" {
-			return errors.New("can only add schedule lines to draft contracts")
+			return ErrSalesAddLineNotDraft
 		}
 
 		nextLineNo, err := q.GetNextScheduleLineNumber(ctx, toPgUUID(contractID))
@@ -1834,8 +1764,8 @@ func AddInstallmentScheduleLine(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
-		if err.Error() == "can only add schedule lines to draft contracts" {
-			return c.Status(409).JSON(fiber.Map{"error": "can only add schedule lines to draft contracts"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to add schedule line"})
@@ -1948,12 +1878,12 @@ func UpdateInstallmentScheduleLine(c *fiber.Ctx) error {
 					return err
 				}
 				if receivable.Status == "paid" || receivable.Status == "partially_paid" {
-					return errors.New("schedule line receivable already paid or partially paid")
+					return ErrSalesLineReceivablePaid
 				}
 			}
 
 			if existing.DueDate.Valid && !existing.DueDate.Time.After(time.Now()) {
-				return errors.New("can only restructure future schedule lines")
+				return ErrSalesLinePastDue
 			}
 
 			payload, _ := json.Marshal(req)
@@ -1995,7 +1925,7 @@ func UpdateInstallmentScheduleLine(c *fiber.Ctx) error {
 			return nil
 
 		default:
-			return errors.New("can only update schedule lines for draft or active contracts")
+			return ErrSalesUpdateLineBadStatus
 		}
 	})
 
@@ -2003,12 +1933,8 @@ func UpdateInstallmentScheduleLine(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "schedule line not found"})
 		}
-		switch err.Error() {
-		case "can only update schedule lines for draft or active contracts":
-			return c.Status(409).JSON(fiber.Map{"error": err.Error()})
-		case "schedule line receivable already paid or partially paid",
-			"can only restructure future schedule lines":
-			return c.Status(409).JSON(fiber.Map{"error": err.Error()})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to update schedule line"})

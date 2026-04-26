@@ -180,4 +180,22 @@ func SetupRoutes(app *fiber.App) {
 	paymentPlanTemplates := api.Group("/payment-plan-templates", middleware.RequireAuth(), middleware.InjectGUCVariables())
 	paymentPlanTemplates.Get("/", handlers.ListPaymentPlanTemplates)
 	paymentPlanTemplates.Post("/", middleware.RequirePermission("sales.payment_plan.create"), handlers.CreatePaymentPlanTemplate)
+
+	// Phase 8: Rentals routes
+	leaseContracts := api.Group("/lease-contracts", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	leaseContracts.Get("/", handlers.ListLeaseContracts)
+	leaseContracts.Post("/", middleware.RequirePermission("rentals.lease.create"), handlers.CreateLeaseContract)
+	leaseContracts.Get("/:id", handlers.GetLeaseContract)
+	leaseContracts.Patch("/:id", middleware.RequirePermission("rentals.lease.edit"), handlers.UpdateLeaseContract)
+	leaseContracts.Post("/:id/activate", middleware.RequirePermission("rentals.lease.activate"), handlers.ActivateLeaseContract)
+	leaseContracts.Post("/:id/terminate", middleware.RequirePermission("rentals.lease.terminate"), handlers.TerminateLeaseContract)
+	leaseContracts.Post("/:id/renew", middleware.RequirePermission("rentals.lease.renew"), handlers.RenewLeaseContract)
+	leaseContracts.Post("/:id/deposit-refund", middleware.RequirePermission("rentals.lease.deposit_refund"), handlers.RequestLeaseDepositRefund)
+	leaseContracts.Get("/:id/billing-schedule", handlers.GetLeaseBillingSchedule)
+	leaseContracts.Get("/:id/bills", handlers.ListLeaseBillsForContract)
+	leaseContracts.Post("/:id/bills/generate", middleware.RequirePermission("rentals.bill.generate"), handlers.GenerateLeaseBills)
+
+	leaseBills := api.Group("/lease-bills", middleware.RequireAuth(), middleware.InjectGUCVariables())
+	leaseBills.Post("/:id/issue", middleware.RequirePermission("rentals.bill.issue"), handlers.IssueLeaseBill)
+	leaseBills.Post("/:id/void", middleware.RequirePermission("rentals.bill.void"), handlers.VoidLeaseBill)
 }

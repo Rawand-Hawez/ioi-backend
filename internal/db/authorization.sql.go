@@ -71,6 +71,47 @@ func (q *Queries) CheckUserPermission(ctx context.Context, arg CheckUserPermissi
 	return has_permission, err
 }
 
+const checkUserPermissionInScope = `-- name: CheckUserPermissionInScope :one
+SELECT EXISTS (
+    SELECT 1
+    FROM public.user_role_scope_assignments ursa
+    JOIN public.roles r ON r.id = ursa.role_id
+    JOIN public.role_permissions rp ON rp.role_id = r.id
+    JOIN public.permissions p ON p.id = rp.permission_id
+    WHERE ursa.user_id = $1
+      AND p.key = $2
+      AND r.is_active = true
+      AND (
+        ursa.scope_type = 'deployment'
+        OR (ursa.scope_type = 'business_entity' AND ursa.scope_id = $3)
+        OR (ursa.scope_type = 'branch' AND ursa.scope_id = $4)
+        OR (ursa.scope_type = 'project' AND ursa.scope_id = $5)
+      )
+) AS has_permission
+`
+
+type CheckUserPermissionInScopeParams struct {
+	UserID    pgtype.UUID `json:"user_id"`
+	Key       string      `json:"key"`
+	ScopeID   pgtype.UUID `json:"scope_id"`
+	ScopeID_2 pgtype.UUID `json:"scope_id_2"`
+	ScopeID_3 pgtype.UUID `json:"scope_id_3"`
+}
+
+// Returns true if user has permission at deployment scope or at the target business_entity/branch/project scope.
+func (q *Queries) CheckUserPermissionInScope(ctx context.Context, arg CheckUserPermissionInScopeParams) (bool, error) {
+	row := q.db.QueryRow(ctx, checkUserPermissionInScope,
+		arg.UserID,
+		arg.Key,
+		arg.ScopeID,
+		arg.ScopeID_2,
+		arg.ScopeID_3,
+	)
+	var has_permission bool
+	err := row.Scan(&has_permission)
+	return has_permission, err
+}
+
 const getPermission = `-- name: GetPermission :one
 SELECT id, key, module, description, created_at FROM public.permissions WHERE id = $1
 `

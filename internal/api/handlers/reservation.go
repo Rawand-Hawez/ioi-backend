@@ -256,7 +256,7 @@ func CreateReservation(c *fiber.Ctx) error {
 			return err
 		}
 		if activeReservation.ID.Valid {
-			return errors.New("unit already has an active reservation")
+			return ErrReservationUnitActive
 		}
 
 		if err := validateReservationDepositPayment(ctx, q, req.DepositPaymentID, req.DepositAmount, businessEntityID, branchID, customerID); err != nil {
@@ -312,8 +312,8 @@ func CreateReservation(c *fiber.Ctx) error {
 	})
 
 	if err != nil {
-		if err.Error() == "unit already has an active reservation" {
-			return c.Status(409).JSON(fiber.Map{"error": "unit already has an active reservation"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		if isReservationDepositValidationError(err) {
 			return c.Status(400).JSON(fiber.Map{"error": err.Error()})
@@ -372,7 +372,7 @@ func ConvertReservation(c *fiber.Ctx) error {
 		}
 
 		if reservation.Status != "active" {
-			return errors.New("reservation is not active")
+			return ErrReservationNotActive
 		}
 
 		salePriceAmount, err := numericContractAmount("quoted_price_amount", reservation.QuotedPriceAmount)
@@ -470,8 +470,8 @@ func ConvertReservation(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "reservation not found"})
 		}
-		if err.Error() == "reservation is not active" {
-			return c.Status(409).JSON(fiber.Map{"error": "reservation is not active"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		if isReservationDepositValidationError(err) ||
 			strings.Contains(err.Error(), "amount") ||
@@ -529,7 +529,7 @@ func CancelReservation(c *fiber.Ctx) error {
 		}
 
 		if reservation.Status != "active" {
-			return errors.New("reservation is not active")
+			return ErrReservationNotActive
 		}
 
 		updateResParams := db.UpdateReservationStatusParams{
@@ -586,8 +586,8 @@ func CancelReservation(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "reservation not found"})
 		}
-		if err.Error() == "reservation is not active" {
-			return c.Status(409).JSON(fiber.Map{"error": "reservation is not active"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to cancel reservation"})

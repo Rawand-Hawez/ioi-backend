@@ -567,40 +567,6 @@ func VoidPayment(c *fiber.Ctx) error {
 	return c.JSON(payment)
 }
 
-func numericToRat(n *pgtype.Numeric) *big.Rat {
-	if n.Int == nil {
-		return big.NewRat(0, 1)
-	}
-	rat := new(big.Rat).SetInt(n.Int)
-	if n.Exp > 0 {
-		mul := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n.Exp)), nil)
-		rat.Mul(rat, new(big.Rat).SetInt(mul))
-	} else if n.Exp < 0 {
-		div := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-n.Exp)), nil)
-		rat.Quo(rat, new(big.Rat).SetInt(div))
-	}
-	return rat
-}
-
-func ratToNumeric(r *big.Rat) pgtype.Numeric {
-	var num pgtype.Numeric
-	floatStr := r.FloatString(18)
-	num.Scan(floatStr)
-	return num
-}
-
-func negateNumeric(n *pgtype.Numeric) pgtype.Numeric {
-	if n.Int == nil || !n.Valid {
-		return pgtype.Numeric{Int: big.NewInt(0), Exp: 0, Valid: true}
-	}
-	neg := pgtype.Numeric{
-		Int:   new(big.Int).Neg(n.Int),
-		Exp:   n.Exp,
-		Valid: true,
-	}
-	return neg
-}
-
 func generateRandomSuffix(length int) string {
 	bytes := make([]byte, length)
 	rand.Read(bytes)
