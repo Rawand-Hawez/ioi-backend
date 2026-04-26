@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS public.sales_contracts (
     created_at               TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now()),
 
-    CONSTRAINT chk_sales_contract_status CHECK (status IN ('draft', 'active', 'cancel_pending_approval', 'cancelled', 'completed', 'terminate_pending_approval', 'terminated', 'defaulted')),
+    CONSTRAINT chk_sales_contract_status CHECK (status IN ('draft', 'active', 'cancelled', 'completed', 'terminated', 'defaulted')),
     CONSTRAINT chk_sales_contract_amounts_nonnegative CHECK (
         sale_price_amount >= 0
         AND discount_amount >= 0
@@ -230,13 +230,15 @@ BEGIN
     END IF;
 END $$;
 
+-- Phase 7 review: tighten chk_sales_contract_status to only include statuses the code path actually
+-- transitions to. Cancellation/termination stay 'active' through the approval gate; intermediate
+-- pending_approval values were never set by handlers. Drop-and-recreate to migrate older databases.
 DO $$
 BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_sales_contract_status') THEN
-        ALTER TABLE public.sales_contracts
-            ADD CONSTRAINT chk_sales_contract_status
-            CHECK (status IN ('draft', 'active', 'cancel_pending_approval', 'cancelled', 'completed', 'terminate_pending_approval', 'terminated', 'defaulted')) NOT VALID;
-    END IF;
+    ALTER TABLE public.sales_contracts DROP CONSTRAINT IF EXISTS chk_sales_contract_status;
+    ALTER TABLE public.sales_contracts
+        ADD CONSTRAINT chk_sales_contract_status
+        CHECK (status IN ('draft', 'active', 'cancelled', 'completed', 'terminated', 'defaulted')) NOT VALID;
 END $$;
 
 DO $$

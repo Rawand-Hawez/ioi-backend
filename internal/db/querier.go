@@ -18,7 +18,13 @@ type Querier interface {
 	CancelApprovalRequest(ctx context.Context, id pgtype.UUID) (ApprovalRequest, error)
 	// Returns true if user has a specific permission through any active role
 	CheckUserPermission(ctx context.Context, arg CheckUserPermissionParams) (bool, error)
+	// Returns true if user has permission at deployment scope or at the target business_entity/branch/project scope.
+	CheckUserPermissionInScope(ctx context.Context, arg CheckUserPermissionInScopeParams) (bool, error)
 	CloseActiveSalesContractPartiesForParty(ctx context.Context, arg CloseActiveSalesContractPartiesForPartyParams) ([]SalesContractParty, error)
+	// Close every active lease_parties row for a lease (tenants, co-tenants, guarantors).
+	// Used by termination apply path so guarantor history is closed alongside tenant history.
+	CloseAllActiveLeaseParties(ctx context.Context, arg CloseAllActiveLeasePartiesParams) ([]LeaseParty, error)
+	CloseLeaseParty(ctx context.Context, arg CloseLeasePartyParams) (LeaseParty, error)
 	CloseResponsibilityAssignment(ctx context.Context, arg CloseResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
 	CloseSalesContractParty(ctx context.Context, arg CloseSalesContractPartyParams) (SalesContractParty, error)
 	CloseUnitOwnership(ctx context.Context, arg CloseUnitOwnershipParams) (UnitOwnership, error)
@@ -32,6 +38,8 @@ type Querier interface {
 	CountBusinessEntities(ctx context.Context, isActive pgtype.Bool) (int64, error)
 	CountCreditBalances(ctx context.Context, arg CountCreditBalancesParams) (int64, error)
 	CountFinancialAdjustments(ctx context.Context, arg CountFinancialAdjustmentsParams) (int64, error)
+	CountLeaseBills(ctx context.Context, arg CountLeaseBillsParams) (int64, error)
+	CountLeaseContracts(ctx context.Context, arg CountLeaseContractsParams) (int64, error)
 	CountParties(ctx context.Context, arg CountPartiesParams) (int64, error)
 	CountPaymentPlanTemplates(ctx context.Context, arg CountPaymentPlanTemplatesParams) (int64, error)
 	CountPayments(ctx context.Context, arg CountPaymentsParams) (int64, error)
@@ -52,6 +60,12 @@ type Querier interface {
 	CreateCreditBalance(ctx context.Context, arg CreateCreditBalanceParams) (CreditBalance, error)
 	CreateFinancialAdjustment(ctx context.Context, arg CreateFinancialAdjustmentParams) (FinancialAdjustment, error)
 	CreateInstallmentScheduleLine(ctx context.Context, arg CreateInstallmentScheduleLineParams) (InstallmentScheduleLine, error)
+	// Idempotent insert: returns NULL via :execrows-style guard not available on :one,
+	// so we use ON CONFLICT DO NOTHING and the handler checks rows-returned vs requested.
+	// Callers MUST pre-check existing periods via ListLeaseBills if they need the existing row.
+	CreateLeaseBill(ctx context.Context, arg CreateLeaseBillParams) (LeaseBill, error)
+	CreateLeaseContract(ctx context.Context, arg CreateLeaseContractParams) (LeaseContract, error)
+	CreateLeaseParty(ctx context.Context, arg CreateLeasePartyParams) (LeaseParty, error)
 	// =============================================================================
 	// Ownership Transfers
 	// =============================================================================
@@ -78,6 +92,7 @@ type Querier interface {
 	DeactivateStructureNode(ctx context.Context, id pgtype.UUID) error
 	DeactivateUnit(ctx context.Context, id pgtype.UUID) error
 	ExpireReservations(ctx context.Context) ([]pgtype.UUID, error)
+	GetActiveLeaseContractForUnit(ctx context.Context, unitID pgtype.UUID) (LeaseContract, error)
 	GetActiveReservationForUnit(ctx context.Context, unitID pgtype.UUID) (Reservation, error)
 	GetActiveResponsibilityAssignment(ctx context.Context, arg GetActiveResponsibilityAssignmentParams) (ResponsibilityAssignment, error)
 	GetActiveSalesContractForUnit(ctx context.Context, unitID pgtype.UUID) (SalesContract, error)
@@ -94,7 +109,14 @@ type Querier interface {
 	GetCreditBalance(ctx context.Context, id pgtype.UUID) (CreditBalance, error)
 	GetFinancialAdjustment(ctx context.Context, id pgtype.UUID) (FinancialAdjustment, error)
 	GetInstallmentScheduleLine(ctx context.Context, id pgtype.UUID) (InstallmentScheduleLine, error)
+	// =============================================================================
+	// Approval gate lookup (Phase 7 pattern)
+	// =============================================================================
+	GetLatestRentalsApprovalRequest(ctx context.Context, arg GetLatestRentalsApprovalRequestParams) (ApprovalRequest, error)
 	GetLatestSalesApprovalRequest(ctx context.Context, arg GetLatestSalesApprovalRequestParams) (ApprovalRequest, error)
+	GetLeaseBill(ctx context.Context, id pgtype.UUID) (LeaseBill, error)
+	GetLeaseBillForPeriod(ctx context.Context, arg GetLeaseBillForPeriodParams) (LeaseBill, error)
+	GetLeaseContract(ctx context.Context, id pgtype.UUID) (LeaseContract, error)
 	GetNextScheduleLineNumber(ctx context.Context, salesContractID pgtype.UUID) (int32, error)
 	GetOwnershipTransfer(ctx context.Context, id pgtype.UUID) (OwnershipTransfer, error)
 	GetOwnershipTransferByApprovalRequest(ctx context.Context, approvalRequestID pgtype.UUID) (OwnershipTransfer, error)
@@ -122,6 +144,8 @@ type Querier interface {
 	GetUserPermissions(ctx context.Context, userID pgtype.UUID) ([]GetUserPermissionsRow, error)
 	GetUserRoleAssignment(ctx context.Context, id pgtype.UUID) (UserRoleScopeAssignment, error)
 	InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) (AuditLog, error)
+	IssueLeaseBill(ctx context.Context, id pgtype.UUID) (LeaseBill, error)
+	LinkLeaseBillReceivable(ctx context.Context, arg LinkLeaseBillReceivableParams) (LeaseBill, error)
 	LinkReservationDepositPayment(ctx context.Context, arg LinkReservationDepositPaymentParams) (Reservation, error)
 	LinkScheduleLineReceivable(ctx context.Context, arg LinkScheduleLineReceivableParams) (InstallmentScheduleLine, error)
 	ListAllocationsForPayment(ctx context.Context, paymentID pgtype.UUID) ([]PaymentAllocation, error)
@@ -153,6 +177,19 @@ type Querier interface {
 	// Installment Schedule Lines
 	// =============================================================================
 	ListInstallmentScheduleLines(ctx context.Context, salesContractID pgtype.UUID) ([]InstallmentScheduleLine, error)
+	// =============================================================================
+	// Lease Bills
+	// =============================================================================
+	ListLeaseBills(ctx context.Context, arg ListLeaseBillsParams) ([]LeaseBill, error)
+	// backend/db/queries/rentals.sql
+	// =============================================================================
+	// Lease Contracts
+	// =============================================================================
+	ListLeaseContracts(ctx context.Context, arg ListLeaseContractsParams) ([]LeaseContract, error)
+	// =============================================================================
+	// Lease Parties (effective-dated)
+	// =============================================================================
+	ListLeaseParties(ctx context.Context, leaseContractID pgtype.UUID) ([]LeaseParty, error)
 	// =============================================================================
 	// Party Domain Queries
 	// =============================================================================
@@ -244,6 +281,8 @@ type Querier interface {
 	UpdateBranch(ctx context.Context, arg UpdateBranchParams) (Branch, error)
 	UpdateBusinessEntity(ctx context.Context, arg UpdateBusinessEntityParams) (BusinessEntity, error)
 	UpdateInstallmentScheduleLine(ctx context.Context, arg UpdateInstallmentScheduleLineParams) (InstallmentScheduleLine, error)
+	UpdateLeaseContract(ctx context.Context, arg UpdateLeaseContractParams) (LeaseContract, error)
+	UpdateLeaseContractStatus(ctx context.Context, arg UpdateLeaseContractStatusParams) (LeaseContract, error)
 	UpdateOwnershipTransferApprovalRequest(ctx context.Context, arg UpdateOwnershipTransferApprovalRequestParams) (OwnershipTransfer, error)
 	UpdateOwnershipTransferStatus(ctx context.Context, arg UpdateOwnershipTransferStatusParams) (OwnershipTransfer, error)
 	UpdateParty(ctx context.Context, arg UpdatePartyParams) (Party, error)
@@ -262,6 +301,7 @@ type Querier interface {
 	UpdateUnitCode(ctx context.Context, arg UpdateUnitCodeParams) (Unit, error)
 	UpdateUnitInventoryStatus(ctx context.Context, arg UpdateUnitInventoryStatusParams) error
 	UpdateUnitOccupancyStatus(ctx context.Context, arg UpdateUnitOccupancyStatusParams) error
+	VoidLeaseBill(ctx context.Context, id pgtype.UUID) (LeaseBill, error)
 	VoidPayment(ctx context.Context, id pgtype.UUID) (Payment, error)
 	VoidReceivable(ctx context.Context, id pgtype.UUID) (Receivable, error)
 }

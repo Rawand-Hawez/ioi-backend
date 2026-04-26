@@ -90,6 +90,10 @@ func InjectGUC(ctx context.Context, tx pgx.Tx, claims map[string]interface{}) er
 		return nil
 	}
 
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.request_origin', 'fiber', true)"); err != nil {
+		return fmt.Errorf("failed to set GUC variable request_origin: %w", err)
+	}
+
 	// set_config(name, value, is_local) — is_local=true scopes to current transaction
 	if sub, ok := claims["sub"].(string); ok && sub != "" {
 		if _, err := tx.Exec(ctx, "SELECT set_config('request.jwt.claim.sub', $1, true)", sub); err != nil {

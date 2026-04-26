@@ -85,7 +85,7 @@ func RequestOwnershipTransfer(c *fiber.Ctx) error {
 		}
 
 		if contract.Status != "active" {
-			return errors.New("can only request transfer for active contracts")
+			return ErrTransferContractNotActive
 		}
 
 		if _, err := q.GetActiveSalesContractPartyForParty(ctx, db.GetActiveSalesContractPartyForPartyParams{
@@ -93,7 +93,7 @@ func RequestOwnershipTransfer(c *fiber.Ctx) error {
 			PartyID:         toPgUUID(fromPartyID),
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return errors.New("from_party_id is not an active party on this contract")
+				return ErrTransferFromPartyInvalid
 			}
 			return err
 		}
@@ -182,11 +182,8 @@ func RequestOwnershipTransfer(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "sales contract not found"})
 		}
-		if err.Error() == "can only request transfer for active contracts" {
-			return c.Status(409).JSON(fiber.Map{"error": "can only request transfer for active contracts"})
-		}
-		if err.Error() == "from_party_id is not an active party on this contract" {
-			return c.Status(400).JSON(fiber.Map{"error": "from_party_id is not an active party on this contract"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "failed to request ownership transfer"})

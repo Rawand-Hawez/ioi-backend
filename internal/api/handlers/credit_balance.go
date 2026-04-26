@@ -168,13 +168,13 @@ func ApplyCreditBalance(c *fiber.Ctx) error {
 		}
 
 		if creditBalance.Status != "available" {
-			return errors.New("credit balance not available")
+			return ErrCreditBalanceNotAvailable
 		}
 
 		remainingRat := numericToRat(&creditBalance.AmountRemaining)
 		amountRat := numericToRat(&amountNumeric)
 		if amountRat.Cmp(remainingRat) > 0 {
-			return errors.New("amount exceeds credit balance remaining")
+			return ErrCreditBalanceExceeds
 		}
 
 		receivable, err := q.GetReceivable(ctx, toPgUUID(receivableID))
@@ -183,12 +183,12 @@ func ApplyCreditBalance(c *fiber.Ctx) error {
 		}
 
 		if receivable.Status != "open" && receivable.Status != "partially_paid" {
-			return errors.New("receivable not open or partially paid")
+			return ErrCreditReceivableNotOpen
 		}
 
 		outstandingRat := numericToRat(&receivable.OutstandingAmount)
 		if amountRat.Cmp(outstandingRat) > 0 {
-			return errors.New("amount exceeds receivable outstanding amount")
+			return ErrCreditExceedsOutstanding
 		}
 
 		updatedCreditBalance, err = q.ApplyCreditBalance(ctx, db.ApplyCreditBalanceParams{
@@ -210,17 +210,8 @@ func ApplyCreditBalance(c *fiber.Ctx) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.Status(404).JSON(fiber.Map{"error": "credit balance or receivable not found"})
 		}
-		if err.Error() == "credit balance not available" {
-			return c.Status(400).JSON(fiber.Map{"error": "credit balance is not available"})
-		}
-		if err.Error() == "amount exceeds credit balance remaining" {
-			return c.Status(400).JSON(fiber.Map{"error": "amount exceeds credit balance remaining"})
-		}
-		if err.Error() == "receivable not open or partially paid" {
-			return c.Status(400).JSON(fiber.Map{"error": "receivable must be open or partially paid"})
-		}
-		if err.Error() == "amount exceeds receivable outstanding amount" {
-			return c.Status(400).JSON(fiber.Map{"error": "amount exceeds receivable outstanding amount"})
+		if code := businessHTTPStatus(err); code != 0 {
+			return c.Status(code).JSON(fiber.Map{"error": err.Error()})
 		}
 		log.Printf("Database error: %v", err)
 		return c.Status(500).JSON(fiber.Map{"error": "internal error"})

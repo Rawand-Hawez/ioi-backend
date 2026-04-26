@@ -168,6 +168,74 @@ type InstallmentScheduleLine struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type LeaseBill struct {
+	ID                   pgtype.UUID        `json:"id"`
+	BusinessEntityID     pgtype.UUID        `json:"business_entity_id"`
+	BranchID             pgtype.UUID        `json:"branch_id"`
+	LeaseContractID      pgtype.UUID        `json:"lease_contract_id"`
+	UnitID               pgtype.UUID        `json:"unit_id"`
+	ResponsiblePartyID   pgtype.UUID        `json:"responsible_party_id"`
+	ReceivableID         pgtype.UUID        `json:"receivable_id"`
+	BillingPeriodStart   pgtype.Date        `json:"billing_period_start"`
+	BillingPeriodEnd     pgtype.Date        `json:"billing_period_end"`
+	DueDate              pgtype.Date        `json:"due_date"`
+	BillingIntervalValue int16              `json:"billing_interval_value"`
+	BillingIntervalUnit  string             `json:"billing_interval_unit"`
+	BilledAmount         pgtype.Numeric     `json:"billed_amount"`
+	CurrencyCode         string             `json:"currency_code"`
+	IsAdvance            bool               `json:"is_advance"`
+	Status               string             `json:"status"`
+	Notes                pgtype.Text        `json:"notes"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LeaseContract struct {
+	ID                         pgtype.UUID `json:"id"`
+	BusinessEntityID           pgtype.UUID `json:"business_entity_id"`
+	BranchID                   pgtype.UUID `json:"branch_id"`
+	ProjectID                  pgtype.UUID `json:"project_id"`
+	UnitID                     pgtype.UUID `json:"unit_id"`
+	PrimaryTenantID            pgtype.UUID `json:"primary_tenant_id"`
+	RenewedFromLeaseContractID pgtype.UUID `json:"renewed_from_lease_contract_id"`
+	LeaseNo                    string      `json:"lease_no"`
+	LeaseType                  string      `json:"lease_type"`
+	// draft, active, expired, renewed, terminated. Termination is approval-gated; lease stays active during pending approval (Phase 7 pattern).
+	Status                string             `json:"status"`
+	StartDate             pgtype.Date        `json:"start_date"`
+	EndDate               pgtype.Date        `json:"end_date"`
+	RentPricingBasis      string             `json:"rent_pricing_basis"`
+	AreaBasisSqm          pgtype.Numeric     `json:"area_basis_sqm"`
+	RatePerSqm            pgtype.Numeric     `json:"rate_per_sqm"`
+	ContractualRentAmount pgtype.Numeric     `json:"contractual_rent_amount"`
+	BillingIntervalValue  int16              `json:"billing_interval_value"`
+	BillingIntervalUnit   string             `json:"billing_interval_unit"`
+	BillingAnchorDate     pgtype.Date        `json:"billing_anchor_date"`
+	SecurityDepositAmount pgtype.Numeric     `json:"security_deposit_amount"`
+	AdvanceRentAmount     pgtype.Numeric     `json:"advance_rent_amount"`
+	CurrencyCode          string             `json:"currency_code"`
+	NoticePeriodDays      pgtype.Int4        `json:"notice_period_days"`
+	PurposeOfUse          pgtype.Text        `json:"purpose_of_use"`
+	Notes                 pgtype.Text        `json:"notes"`
+	CreatedByUserID       pgtype.UUID        `json:"created_by_user_id"`
+	ApprovedByUserID      pgtype.UUID        `json:"approved_by_user_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LeaseParty struct {
+	ID              pgtype.UUID        `json:"id"`
+	LeaseContractID pgtype.UUID        `json:"lease_contract_id"`
+	PartyID         pgtype.UUID        `json:"party_id"`
+	Role            string             `json:"role"`
+	IsPrimary       bool               `json:"is_primary"`
+	EffectiveFrom   pgtype.Date        `json:"effective_from"`
+	EffectiveTo     pgtype.Date        `json:"effective_to"`
+	Status          string             `json:"status"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type OwnershipTransfer struct {
 	ID                pgtype.UUID `json:"id"`
 	BusinessEntityID  pgtype.UUID `json:"business_entity_id"`
